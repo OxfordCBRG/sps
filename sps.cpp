@@ -283,20 +283,20 @@ void get_data(struct jobstats &job)
         // The PID directories are the ones with an all numeric name.
         if (! all_of(pid.begin(), pid.end(), ::isdigit))
            continue;
-        // We only care about PIDs in the same cgroup as us.
-        const auto pid_root = string(full_path);
-        const auto cgroup = file_to_string(pid_root + "/cgroup");
-        if (cgroup != job.cgroup)
-           continue;
+        struct pidstats p;
         // Reading the PID stats can go wrong in multple ways. Some PIDs
         // such as "sshd" and "slurmstepd" don't let us access their I/O
         // stats. Or, we could get part way through reading data, get
         // preempted, and when we resume the PID we're reading has now
         // terminated. The cleanest way to deal with this is to catch any
         // errors and then just skip those PIDs.
-        struct pidstats p;
         try
         {
+            // We only care about PIDs in the same cgroup as us.
+            const auto pid_root = string(full_path);
+            const auto cgroup = file_to_string(pid_root + "/cgroup");
+            if (cgroup != job.cgroup)
+                continue;
             get_pid_data(pid, p, pid_root);
         }
         catch (const exception &e)
