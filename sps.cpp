@@ -17,14 +17,14 @@
 
 using namespace std;
 
-struct jobstats { ofstream log; bool full_logging; bool auto_resources;
-                  bool debug_mode; string outputdir;
+struct jobstats { ofstream log; string outputdir; 
+                  bool full_logging; bool unlimited_data;
                   string cpus; string id; string arrayjob; string arraytask;
                   string cgroup; string mem; string read; string write;
                   string filestem; string cpufile; string memfile;
                   string readfile; string writefile;
                   time_t start; unsigned long long tick; bool rewrite;
-                  unsigned int sample_rate; int max_procs; int nprocs;
+                  unsigned int sample_rate;
 		  map<string, string> pidcomm;
 		  map<string, string> pidthreads;
                   map<string, vector<string>> pidfiles;
@@ -49,6 +49,8 @@ void log_startup(struct jobstats&);
 void get_pid_data(const string&, pidstats&, const string&);
 void emplace_new_pid(pidstats&, jobstats&);
 void get_data(struct jobstats&);
+void shrink_data(struct jobstats&);
+size_t shrink_string_vector(vector<string> &);
 void log_open_files(jobstats&, const string&);
 void log_threads(jobstats&, const string&, const string&);
 void write_output(struct jobstats&);
@@ -74,33 +76,18 @@ int main(int argc, char *argv[])
         // Invariant: job.tick = current iteration collecting and writing data
         for (job.tick = 1; ; job.tick++)
         {
+            // First, collect data.
             get_data(job);
-            // Check current limits
-            if (job.nprocs > job.max_procs)
+            // Next, make sure we don't consume all memory by utilising
+            // RRD-like auto data resizing. We pick 1024 as our maximum
+            // because our PNG plot has no more than that many points, so
+            // extra data is wasteful. This caused the all data to get halved
+            // when it gets too big, and doubles the sample rate.
+            if ((job.tick % 1024) == 0 && (!job.unlimited_data))
             {
-                if (job.auto_resources)
-                {
-                    job.sample_rate *= 2;
-                    job.max_procs *= 2;
-                    job.log << "SPS_AUTO_RESOURCES: Increasing SPS_MAX_PROCS to "
-                            << job.max_procs << " and reducing "
-                            << "SPS_SAMPLE_RATE to " << job.sample_rate << "\n";
-                    job.log.flush();
-                }
-                else
-                    throw runtime_error("FATAL ERROR: SPS_MAX_PROCS exceeded\n");
-            }
-            // Debugging
-            if (job.debug_mode)
-            {
-                //string mypid = to_string(getpid());
-                job.log << "DEBUG:"
-                        << " tick=" << job.tick
-                        << " sample_rate=" << job.sample_rate
-                        << " current_procs=" << job.pidcomm.size()
-                        << " max_procs=" << job.max_procs
-                        << " sps_rss=" << job.pidmem.at(mypid()).back()
-                        << "\n";
+                shrink_data(job);
+                job.log << "SPS_AUTO_RESOURCES: Compacted data and reduced "
+                        << "sampling rate to " << job.sample_rate << "s\n";
                 job.log.flush();
             }
             write_output(job);
@@ -173,15 +160,9 @@ void init_logging(int argc, char *argv[], jobstats &job)
 
 void init_rc(struct jobstats &job)
 {
-    // By default, use auto resources. This sets the sample_rate to 1s and
-    // the max_procs to 4. Every time the max_procs is exceeded, both it and
-    // the sample_rate are doubled. This does mean that the X-axis is non-
-    // linear, but also allows a reasonable attempt at profiling the job even
-    // for jobs which spawn quite a lot of processes.
-    job.auto_resources = true;
     job.sample_rate = 1;
-    job.max_procs = 4;
     job.full_logging = false;
+    job.unlimited_data = false;
     if (!filesystem::exists("spsrc"))
         return;
     // File layout is "OPTION VALUE" pairs
@@ -202,28 +183,8 @@ void init_rc(struct jobstats &job)
         // Text options
         if (opt == "SPS_FULL_LOGGING" && val == "true")
             job.full_logging = true;
-        if (opt == "SPS_DEBUG_MODE" && val == "true")
-        {
-            job.debug_mode = true;
-            job.full_logging = true;
-        }
-        // Numeric options (validate as 0 < x <= 1024)
-        // These will disable auto_resources when set
-        if (val == "") // Shouldn't be possible, but safest
-            continue;
-        if (!all_of(val.begin(), val.end(), ::isdigit))
-            continue;
-        int new_value = stoi(val);
-        if (new_value < 1)
-            continue;
-        if (new_value > 1024)
-            continue;
-        // We have a valid numeric value
-        job.auto_resources = false;
-        if (opt == "SPS_SAMPLE_RATE")
-            job.sample_rate = new_value;
-        else if (opt == "SPS_MAX_PROCS")
-            job.max_procs = new_value;
+        else if (opt == "SPS_UNLIMITED_DATA" && val == "true")
+            job.unlimited_data = true;
     }
 }
 
@@ -261,19 +222,8 @@ void log_startup(struct jobstats &job)
     job.log << "READ_OUT_FILE\t\t" << job.readfile << endl;
     job.log << "WRITE_OUT_FILE\t\t" << job.writefile << endl;
     job.log << "SPS_PROCESS\t\t" << mypid() << endl;
-    job.log << "SPS_MAX_PROCS\t\t" << job.max_procs << endl;
-    job.log << "SPS_SAMPLE_RATE\t\t" << job.sample_rate
-            << "s (faster events may not be detected)\n";
-    if (job.auto_resources)
-        job.log << "SPS_AUTO_RESOURCES\ttrue\n";
-    else
-        job.log << "SPS_AUTO_RESOURCES\tfalse\n";
     if (job.full_logging)
         job.log << "SPS_FULL_LOGGING\ttrue\n";
-    else
-        job.log << "SPS_FULL_LOGGING\tfalse\n";
-    if (job.debug_mode)
-        job.log << "SPS_DEBUG_MODE\t\ttrue\n";
     job.log << "Starting profiling...\n";
     job.log.flush();
 }
@@ -318,13 +268,10 @@ void emplace_new_pid(pidstats &p, jobstats &job)
     job.pidwrite.emplace(p.pid, vector<string> {});
     // Then, we need to pad the entry with 0's for every tick
     // that's already passed.
-    for (unsigned long long i = 1; i < job.tick; i++)
-    {
-        job.pidcpu[p.pid].push_back("0");
-        job.pidmem[p.pid].push_back("0");
-        job.pidread[p.pid].push_back("0");
-        job.pidwrite[p.pid].push_back("0");
-    }
+    job.pidcpu[p.pid].resize(job.tick - 1, "0");
+    job.pidmem[p.pid].resize(job.tick - 1, "0");
+    job.pidread[p.pid].resize(job.tick - 1, "0");
+    job.pidwrite[p.pid].resize(job.tick - 1, "0");
     // Now we're all initialised to add the new data, just like
     // any other PID. Set job.rewrite to "true" so we know to
     // rewrite our whole output later, adding a new column.
@@ -387,24 +334,74 @@ void get_data(struct jobstats &job)
     //    that the previous loop failed to get new values because there's
     //    no entries in /proc any more. We fix that by checking whether every
     //    vector in every map has the same number of data points as our tick.
-    //    If they don't it's because it's not been updated yet, so we push a
-    //    new blank data point onto the end.
+    //    If they don't it's because it's not been updated yet, so resize the
+    //    vector to the same size and pad the new entry with "0". This also
+    //    has the side effect that we guarantee that every vector has exactly 
+    //    the correct number of entries.
     for (auto & [pid, data] : job.pidcpu)
-        if (data.size() < job.tick)
-            data.push_back("0"); 
+        if (data.size() != job.tick)
+            data.resize(job.tick, "0"); 
     for (auto & [pid, data] : job.pidmem)
-        if (data.size() < job.tick)
-            data.push_back("0"); 
+        if (data.size() != job.tick)
+            data.resize(job.tick, "0"); 
     for (auto & [pid, data] : job.pidread)
-        if (data.size() < job.tick)
-            data.push_back("0"); 
+        if (data.size() != job.tick)
+            data.resize(job.tick, "0"); 
     for (auto & [pid, data] : job.pidwrite)
-        if (data.size() < job.tick)
-            data.push_back("0"); 
+        if (data.size() != job.tick)
+            data.resize(job.tick, "0"); 
     // Now, we know for sure that every PID that's ever run has exactly the
     // same number of data points, which is the same as our current "tick".
-    // Lastly, upate our record of how many processes we're tracking.
-    job.nprocs = job.pidcomm.size();
+}
+
+// Halve the size of our in-memory data structures and tweak our other
+// variables accordingly
+void shrink_data(jobstats &job)
+{
+    // Tick has to be even
+    if ((job.tick % 2) == 1)
+        job.tick++;
+    // Shrink our data
+    job.tick /= 2;
+    for (auto & [pid, data] : job.pidcpu)
+        if (shrink_string_vector(data) != job.tick)
+            throw runtime_error("Data vector is wrong size\n");
+    for (auto & [pid, data] : job.pidmem)
+        if (shrink_string_vector(data) != job.tick)
+            throw runtime_error("Data vector is wrong size\n");
+    for (auto & [pid, data] : job.pidread)
+        if (shrink_string_vector(data) != job.tick)
+            throw runtime_error("Data vector is wrong size\n");
+    for (auto & [pid, data] : job.pidwrite)
+        if (shrink_string_vector(data) != job.tick)
+            throw runtime_error("Data vector is wrong size\n");
+    // Now sample half as often
+    job.sample_rate *= 2;
+    // This will require a full rewite of our output files
+    job.rewrite = true;
+}
+
+// Halve the size of a string vector by keeping every other value
+size_t shrink_string_vector(vector<string> &v)
+{
+    // Need an even number of elements - can just duplicate last if needed
+    if ( (v.size() % 2) == 1)
+        v.push_back(v.back());
+    // In order, make the first half of the entries into the data we want to
+    // keep, namely every other entry, so:
+    //     1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+    // becomes:
+    //     2, 4, 6, 8, 10, 6, 7, 8, 9, 10
+    for (size_t i = 0; i < v.size(); i++)
+        // Because vectors are base 0 and not base 1, we want the odd entries
+        if ( (i % 2) == 1 )
+            // Base 1, this is value i + 1. We want it to go in position
+            // n / 2, or (i + 1)/2. Because we're base 0, that's one less, or
+            // ( (i + 1) / 2 ) - 1
+            v.at(((i+1)/2)-1) = v.at(i);
+    // Now just throw away the last half of the data
+    v.resize(v.size()/2);
+    return v.size();
 }
 
 void log_open_files(jobstats &job, const string &pid)
