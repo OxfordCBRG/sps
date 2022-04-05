@@ -18,13 +18,13 @@
 using namespace std;
 
 struct jobstats { ofstream log; bool full_logging; bool auto_resources;
-                  string outputdir;
+                  bool debug_mode; string outputdir;
                   string cpus; string id; string arrayjob; string arraytask;
                   string cgroup; string mem; string read; string write;
                   string filestem; string cpufile; string memfile;
                   string readfile; string writefile;
                   time_t start; unsigned long long tick; bool rewrite;
-                  unsigned int samplerate; int max_procs; int nprocs;
+                  unsigned int sample_rate; int max_procs; int nprocs;
 		  map<string, string> pidcomm;
 		  map<string, string> pidthreads;
                   map<string, vector<string>> pidfiles;
@@ -35,7 +35,8 @@ struct jobstats { ofstream log; bool full_logging; bool auto_resources;
 struct pidstats { string pid; string comm; string cpu; string mem;
                   string read; string write; string threads; };
 
-inline const string get_env_var(const char * c)
+inline const string mypid() {return to_string(getpid()); }
+inline const string get_env_var(const char *c)
     { const char *p = getenv(c); return(string(p ? p : "")); }
 const unsigned long long get_uptime(void);
 const vector<string> split_on_space(const string&);
@@ -74,22 +75,36 @@ int main(int argc, char *argv[])
         for (job.tick = 1; ; job.tick++)
         {
             get_data(job);
+            // Check current limits
             if (job.nprocs > job.max_procs)
             {
                 if (job.auto_resources)
                 {
-                    job.samplerate *= 2;
+                    job.sample_rate *= 2;
                     job.max_procs *= 2;
                     job.log << "SPS_AUTO_RESOURCES: Increasing SPS_MAX_PROCS to "
                             << job.max_procs << " and reducing "
-                            << "SPS_SAMPLE_RATE to " << job.samplerate << "\n";
+                            << "SPS_SAMPLE_RATE to " << job.sample_rate << "\n";
                     job.log.flush();
                 }
                 else
                     throw runtime_error("FATAL ERROR: SPS_MAX_PROCS exceeded\n");
             }
+            // Debugging
+            if (job.debug_mode)
+            {
+                //string mypid = to_string(getpid());
+                job.log << "DEBUG:"
+                        << " tick=" << job.tick
+                        << " sample_rate=" << job.sample_rate
+                        << " current_procs=" << job.pidcomm.size()
+                        << " max_procs=" << job.max_procs
+                        << " sps_rss=" << job.pidmem.at(mypid()).back()
+                        << "\n";
+                job.log.flush();
+            }
             write_output(job);
-            sleep(job.samplerate);
+            sleep(job.sample_rate);
         }
         return 0;
     }
@@ -158,67 +173,57 @@ void init_logging(int argc, char *argv[], jobstats &job)
 
 void init_rc(struct jobstats &job)
 {
-    // By default, use auto resources. This sets the sample rate to 1s and
+    // By default, use auto resources. This sets the sample_rate to 1s and
     // the max_procs to 4. Every time the max_procs is exceeded, both it and
-    // the sample rate are doubled. This does mean that the X-axis is non-
+    // the sample_rate are doubled. This does mean that the X-axis is non-
     // linear, but also allows a reasonable attempt at profiling the job even
     // for jobs which spawn quite a lot of processes.
     job.auto_resources = true;
-    job.samplerate = 1;
+    job.sample_rate = 1;
     job.max_procs = 4;
     job.full_logging = false;
-    // Check for rc file and set sample rate and full logging accordingly.
-    if (filesystem::exists("spsrc"))
+    if (!filesystem::exists("spsrc"))
+        return;
+    // File layout is "OPTION VALUE" pairs
+    const auto rc = split_on_space(file_to_string("spsrc"));
+    if (rc.empty())
+        return;
+    // Now iterate through the entries. This does, in fact, check all the
+    // values as if they were options, but it doesn't make any functional
+    // difference and allows us to recover from missing values.
+    for (long unsigned int i = 0; i < rc.size(); i++)
     {
-        // File layout is "OPTION VALUE" pairs, one pair per line.
-        const auto rc = split_on_space(file_to_string("spsrc"));
-        if (rc.empty())
+        string opt = rc.at(i);
+        // If there's no next entry, we're done.
+        if (i + 1 >= rc.size())
             return;
-        // Now iterate through the entries. This does, in fact, check all the
-        // values as if they were options, but it doesn't make any functional
-        // difference and allows us to recover from missing values.
-        for (long unsigned int i = 0; i < rc.size(); i++)
+        string val = rc.at(i + 1);
+        // Invalid options or values are silently ignored.
+        // Text options
+        if (opt == "SPS_FULL_LOGGING" && val == "true")
+            job.full_logging = true;
+        if (opt == "SPS_DEBUG_MODE" && val == "true")
         {
-            string opt = rc.at(i);
-            // If there's no next entry, we're done.
-            if (i + 1 >= rc.size())
-                return;
-            string val = rc.at(i + 1);
-            // Read options. Invalid options or values are silently ignored.
-            if (opt == "SPS_FULL_LOGGING")
-            {
-                if (val == "true")
-                    job.full_logging = true;
-            }
-            // Sample rate can't meaningfully be less than 1s or more than 60s
-            else if (opt == "SPS_SAMPLE_RATE")
-            {
-                if ( val != "" && all_of(val.begin(), val.end(), ::isdigit))
-                {
-                    int i = stoi(val);
-                    if (i > 0 && i <= 60)
-                    {
-                        job.samplerate = i;
-                        job.auto_resources = false;
-                    }
-                }
-            }
-            // Every job has at leat 4 processes. More than 128 will man SPS
-            // will easily grow to over 1G memory for moderately long jobs.
-            // If someone asks we could increase this, but doubtful.
-            else if (opt == "SPS_MAX_PROCS")
-            {
-                if ( val != "" && all_of(val.begin(), val.end(), ::isdigit))
-                {
-                    int i = stoi(val);
-                    if (i > 3 && i <= 128)
-                    {
-                        job.max_procs = i;
-                        job.auto_resources = false;
-                    }
-                }
-            }
+            job.debug_mode = true;
+            job.full_logging = true;
         }
+        // Numeric options (validate as 0 < x <= 1024)
+        // These will disable auto_resources when set
+        if (val == "") // Shouldn't be possible, but safest
+            continue;
+        if (!all_of(val.begin(), val.end(), ::isdigit))
+            continue;
+        int new_value = stoi(val);
+        if (new_value < 1)
+            continue;
+        if (new_value > 1024)
+            continue;
+        // We have a valid numeric value
+        job.auto_resources = false;
+        if (opt == "SPS_SAMPLE_RATE")
+            job.sample_rate = new_value;
+        else if (opt == "SPS_MAX_PROCS")
+            job.max_procs = new_value;
     }
 }
 
@@ -237,7 +242,7 @@ void init_data(struct jobstats &job)
     job.read = "0";
     job.write = "0";
     // Everything is in a cgroup. If we're not in a job this is our login.
-    job.cgroup = file_to_string("/proc/" + to_string(getpid()) + "/cgroup");
+    job.cgroup = file_to_string("/proc/" + mypid() + "/cgroup");
     job.cpufile = job.filestem + "-cpu.tsv";
     job.memfile = job.filestem + "-mem.tsv";
     job.readfile = job.filestem + "-read.tsv";
@@ -255,14 +260,20 @@ void log_startup(struct jobstats &job)
     job.log << "MEM_OUT_FILE\t\t" << job.memfile << endl;
     job.log << "READ_OUT_FILE\t\t" << job.readfile << endl;
     job.log << "WRITE_OUT_FILE\t\t" << job.writefile << endl;
-    job.log << "SPS_PROCESS\t\t" << to_string(getpid()) << endl;
+    job.log << "SPS_PROCESS\t\t" << mypid() << endl;
     job.log << "SPS_MAX_PROCS\t\t" << job.max_procs << endl;
-    job.log << "SPS_SAMPLE_RATE\t\t" << job.samplerate
+    job.log << "SPS_SAMPLE_RATE\t\t" << job.sample_rate
             << "s (faster events may not be detected)\n";
     if (job.auto_resources)
         job.log << "SPS_AUTO_RESOURCES\ttrue\n";
+    else
+        job.log << "SPS_AUTO_RESOURCES\tfalse\n";
     if (job.full_logging)
         job.log << "SPS_FULL_LOGGING\ttrue\n";
+    else
+        job.log << "SPS_FULL_LOGGING\tfalse\n";
+    if (job.debug_mode)
+        job.log << "SPS_DEBUG_MODE\t\ttrue\n";
     job.log << "Starting profiling...\n";
     job.log.flush();
 }
