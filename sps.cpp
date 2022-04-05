@@ -10,570 +10,261 @@
 #include <iostream>
 #include <istream>
 #include <iterator>
-#include <regex>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
 
 using namespace std;
 
-struct jobstats { ofstream log; string outputdir; 
-                  bool full_logging; bool unlimited_data;
-                  string cpus; string id; string arrayjob; string arraytask;
-                  string cgroup; string mem; string read; string write;
-                  string filestem; string cpufile; string memfile;
-                  string readfile; string writefile;
-                  time_t start; unsigned long long tick; bool rewrite;
-                  unsigned int sample_rate;
-		  map<string, string> pidcomm;
-		  map<string, string> pidthreads;
-                  map<string, vector<string>> pidfiles;
-                  map<string, vector<float>> pidcpu;
-                  map<string, vector<float>> pidmem;
-                  map<string, vector<float>> pidread;
-                  map<string, vector<float>> pidwrite; };
-struct pidstats { string pid; string comm; string threads;
-                  float cpu; float mem; float read; float write; };
+struct Metric
+{
+    string Req, File;
+    map<string, vector<float>> Data;
+};
+struct Jobstats
+{
+    unsigned long long Tick;
+    unsigned int Rate;
+    bool Rewrite;
+    Metric Cpu, Mem, Read, Write;
+    string Cgroup;
+};
 
-inline const string mypid() {return to_string(getpid()); }
-inline const string get_env_var(const char *c)
-    { const char *p = getenv(c); return(string(p ? p : "")); }
+inline void get_data(struct Jobstats&);
+inline void shrink_data(struct Jobstats&);
+inline void write_output(struct Jobstats&);
 const unsigned long long get_uptime(void);
 const vector<string> split_on_space(const string&);
 const string file_to_string(const string&);
 void rotate_output(string&);
-void init_logging(int, char**, jobstats&);
-void init_rc(struct jobstats&);
-void init_data(struct jobstats&);
-void log_startup(struct jobstats&);
-void get_pid_data(const string&, pidstats&, const string&);
-void emplace_new_pid(pidstats&, jobstats&);
-void get_data(struct jobstats&);
-void shrink_data(struct jobstats&);
-template<typename T> size_t shrink_vector(vector<T> &);
-void log_open_files(jobstats&, const string&);
-void log_threads(jobstats&, const string&, const string&);
-void write_output(struct jobstats&);
-void backup_output(struct jobstats&);
-void delete_backup(struct jobstats&);
-template<typename T> void rewrite_tab(string&, map<string, string>&, map<string,
-                 vector<T>>&, string&, unsigned long long int&);
-template<typename T>void append_tab(string&, map<string, vector<T>>&,
-                string&, unsigned long long int&);
+template<typename T> void shrink_vector(vector<T> &);
+void rewrite_tab(Metric&, unsigned long long int&);
+void append_tab(Metric&, unsigned long long int&);
 
 int main(int argc, char *argv[])
 {
-    struct jobstats job;
-    init_logging(argc, argv, job);
-    try // Now we can log the exceptions
+    struct Jobstats Job;
+    // INITIALISE LOGGING
+    string id = "-";
+    Job.Cpu.Req = "1";
+    string outputdir = "sps-local";
+    if (argc == 5) // This is Slurm, override defaults
+    {   // N.B Spank plugin can't use environment variables.
+        id = string(argv[1]);         // JOBID
+        Job.Cpu.Req = string(argv[2]);       // REQUESTED_CPUS
+        string arrayjob = string(argv[3]);   // ARRAY_ID
+        string arraytask = string(argv[4]);  // ARRAY_TASK
+        if (arrayjob != "0")          // Is 0 when not array job
+            id = arrayjob + "_" + arraytask;
+        outputdir = "sps-" + id;
+    }
+    if (filesystem::exists(outputdir))
+        rotate_output(outputdir);     // Up to 9 versions
+    filesystem::create_directory(outputdir);
+    string filestem = outputdir + "/" + outputdir;
+    ofstream log;
+    log.open(filestem + ".log");
+    if (!log.is_open())
+        exit(1); // Can't recover, can't log.
+    ios_base::sync_with_stdio(false); // Don't need C compatibility, faster.
+    // INITIALISE DATA
+    Job.Rate = 1;
+    Job.Mem.Req = file_to_string("/sys/fs/cgroup/memory/slurm/uid_" +
+        to_string(getuid()) + "/job_" + id + "/memory.soft_limit_in_bytes");
+    if (Job.Mem.Req == "") // Empty if not in a job
+        Job.Mem.Req = "0";
+    else
+        Job.Mem.Req = to_string(stof(Job.Mem.Req)/1024/1024/1024); // Want GB, not B.
+    Job.Read.Req = "0";
+    Job.Write.Req = "0";
+    Job.Cgroup = file_to_string("/proc/" + to_string(getpid()) + "/cgroup");
+    Job.Cpu.File = filestem + "-cpu.tsv";
+    Job.Mem.File = filestem + "-mem.tsv";
+    Job.Read.File = filestem + "-read.tsv";
+    Job.Write.File = filestem + "-write.tsv";
+    // LOG STARTUP
+    log << "CBB Profiling started ";
+    time_t start = chrono::system_clock::to_time_t(chrono::system_clock::now());
+    log << string(ctime(&start));
+    log << "SLURM_JOB_ID\t\t" << id << endl;
+    log << "REQ_CPU_CORES\t\t" << Job.Cpu.Req << endl;
+    log << "REQ_MEMORY_GB\t\t" << Job.Mem.Req << endl;
+    log << "Starting profiling...\n";
+    log.flush();
+    // READY TO GO
+    try
     {
-        init_rc(job);
-        init_data(job);
-        // Don't chdir to / but do send STDIN, STDOUT and STDERR to /dev/null
-        if (daemon(1,0) == -1)
+        if (daemon(1,0) == -1) // Don't chdir, do send output to /dev/null
             throw runtime_error("Failed to daemonise\n");
-        log_startup(job);
-        // Invariant: job.tick = current iteration collecting and writing data
-        for (job.tick = 1; ; job.tick++)
+        // MAIN LOOP
+        for (Job.Tick = 1; ; Job.Tick++) // Invariant: Tick = current iteration
         {
-            // First, collect data.
-            get_data(job);
-            // Next, make sure we don't consume all memory by utilising
-            // RRD-like auto data resizing. We pick 4096 as our maximum
-            // because it works out quite nicely empirically. After that,
-            // half the data and double the sample rate.
-            if ((job.tick % 4096) == 0 && (!job.unlimited_data))
-            {
-                shrink_data(job);
-                job.log << "SPS_AUTO_RESOURCES: Compacted data and reduced "
-                        << "sampling rate to " << job.sample_rate << "s\n";
-                job.log.flush();
-            }
-            write_output(job);
-            sleep(job.sample_rate);
+            get_data(Job);
+            write_output(Job);
+            if ((Job.Tick % 4096) == 0)
+                shrink_data(Job); // RRD-like resizing to control size
+            sleep(Job.Rate);
         }
         return 0;
+        // END MAIN LOOP
     }
     catch (const exception &e)
     {
-        job.log << e.what() << endl;
-        job.log.flush();
+        log << e.what() << endl;
+        log.flush();
         exit(1);
     }
 } 
 
-void rotate_output(string &s)
+inline void get_data(struct Jobstats &Job)
 {
-    for (int i = 1; i < 10; i++)
-    {
-        if (!filesystem::exists(s + "." + to_string(i)))
-        {
-            filesystem::rename(s, s + "." + to_string(i));
-            return;
-        }
-    }
-    throw runtime_error("Exceed maximum rotate_output\n");
-}
-
-void init_logging(int argc, char *argv[], jobstats &job)
-{
-    // We need a log file (a daemon can't output to STDOUT). To do that, we
-    // need some key variables. This is a PITA. When the program is run by the
-    // Slurm spank plugin the environment variables haven't been set yet
-    // so we have to use the values we've been passed by it instead.
-    // These are passed as JOBID REQUESTED_CPUS ARRAY_ID ARRAY_TASK.
-    // N.B. argv[0] is the executable name.
-    if (argc == 5)
-    {
-        job.id = string(argv[1]);
-        job.cpus = string(argv[2]);
-        job.arrayjob = string(argv[3]);
-        job.arraytask = string(argv[4]);
-        // SLURM_ARRAY_JOB_ID is always set to either the array job ID or 0 if
-        // the job isn't an array. So, if it's non-zero, construct the full array
-        // job ID.
-        if (job.arrayjob != "0")
-            job.id = job.arrayjob + "_" + job.arraytask;
-        job.outputdir = "sps-" + job.id;
-    }
-    // Alternatively, we might be being run manually. Use defaults.
-    else
-    {
-        job.id = "-";
-        job.cpus = "1";
-        job.outputdir = "sps-local";
-    }
-    // Now check whether the job output directory exists already. If it does,
-    // rotate it out of the way (maximum 9 times).
-    if (filesystem::exists(job.outputdir))
-        rotate_output(job.outputdir);
-    filesystem::create_directory(job.outputdir);
-    job.filestem = job.outputdir + "/" + job.outputdir;
-    // Ready. Start logging if we need to.
-    job.log.open(job.filestem + ".log");
-    if (!job.log.is_open())
-        exit(1); // Can't recover, can't log.
-    // Don't care about I/O compatibility with C. Let's go fast.
-    ios_base::sync_with_stdio(false);
-}
-
-void init_rc(struct jobstats &job)
-{
-    job.sample_rate = 1;
-    job.full_logging = false;
-    job.unlimited_data = false;
-    if (!filesystem::exists("spsrc"))
-        return;
-    // File layout is "OPTION VALUE" pairs
-    const auto rc = split_on_space(file_to_string("spsrc"));
-    if (rc.empty())
-        return;
-    // Now iterate through the entries. This does, in fact, check all the
-    // values as if they were options, but it doesn't make any functional
-    // difference and allows us to recover from missing values.
-    for (long unsigned int i = 0; i < rc.size(); i++)
-    {
-        string opt = rc.at(i);
-        // If there's no next entry, we're done.
-        if (i + 1 >= rc.size())
-            return;
-        string val = rc.at(i + 1);
-        // Invalid options or values are silently ignored.
-        // Text options
-        if (opt == "SPS_FULL_LOGGING" && val == "true")
-            job.full_logging = true;
-        else if (opt == "SPS_UNLIMITED_DATA" && val == "true")
-            job.unlimited_data = true;
-    }
-}
-
-void init_data(struct jobstats &job)
-{
-    job.start = chrono::system_clock::to_time_t(chrono::system_clock::now());
-    job.mem = file_to_string("/sys/fs/cgroup/memory/slurm/uid_" +
-                           to_string(getuid()) + "/job_" + job.id +
-                           "/memory.soft_limit_in_bytes");
-    // If we're not in a job, that will have returned an empty string.
-    if (job.mem == "")
-        job.mem = "0";
-    else
-        job.mem = to_string(stof(job.mem)/1024/1024/1024); // Want GB, not B.
-    // We need values for "requested"
-    job.read = "0";
-    job.write = "0";
-    // Everything is in a cgroup. If we're not in a job this is our login.
-    job.cgroup = file_to_string("/proc/" + mypid() + "/cgroup");
-    job.cpufile = job.filestem + "-cpu.tsv";
-    job.memfile = job.filestem + "-mem.tsv";
-    job.readfile = job.filestem + "-read.tsv";
-    job.writefile = job.filestem + "-write.tsv";
-}
-
-void log_startup(struct jobstats &job)
-{
-    job.log << "CBB Profiling started ";
-    job.log << string(ctime(&job.start));
-    job.log << "SLURM_JOB_ID\t\t" << job.id << endl;
-    job.log << "REQ_CPU_CORES\t\t" << job.cpus << endl;
-    job.log << "REQ_MEMORY_GB\t\t" << job.mem << endl;
-    if (job.full_logging)
-        job.log << "SPS_FULL_LOGGING\ttrue\n";
-    if (job.unlimited_data)
-        job.log << "SPS_UNLIMITED_DATA\ttrue\n";
-    job.log << "Starting profiling...\n";
-    job.log.flush();
-}
-
-void get_pid_data(const string& pid, struct pidstats &p, const string &pid_root)
-{
-    p.pid = pid;
-    p.comm = file_to_string(pid_root + "/comm");
-    // /proc/PID/stat has lots of entries on a single line. We get
-    // them as a vector "stats" and then access them later via at().
-    const auto stats = split_on_space(file_to_string(pid_root + "/stat"));
-    // The runtime of our pid is (system uptime) - (start time of PID)
-    const float runtime = get_uptime() - stof(stats.at(21)); 
-    // Total CPU time is the sum of user time and system time
-    const float cputime = stof(stats.at(13)) + stof(stats.at(14));
-    p.threads = stats.at(19);
-    // CPU is the number of whole CPUs being used and is calculated
-    // using total used CPU time / total runtime.
-    // This is the same as in "ps", NOT the same as "top".
-    p.cpu = cputime / runtime;
-    // RSS is in pages. 1 page = 4096 bytes, or 4 kb. Then, we want GB.
-    p.mem = (stof(stats.at(23)) * 4) / 1024 / 1024;
-    // /prod/PID/io has entries in the format "name: value". We turn
-    // these into a vector on space (including newline) so we can
-    // access the values directly without further manipulation.
-    // These are in bytes, but we want GB.
-    const auto iostats = split_on_space(file_to_string(pid_root + "/io"));
-    p.read = stof(iostats.at(9)) / 1024 / 1024 / 1024;
-    p.write = stof(iostats.at(11)) / 1024 / 1024 / 1024;
-}
-
-void emplace_new_pid(pidstats &p, jobstats &job)
-{
-    job.pidcomm.emplace(p.pid, p.comm);
-    if (job.full_logging)
-        job.log << job.tick << ":" << job.pidcomm.at(p.pid) << "-"
-                << p.pid << " started\n";
-    job.pidcpu.emplace(p.pid, vector<float> {});
-    job.pidmem.emplace(p.pid, vector<float> {});
-    job.pidread.emplace(p.pid, vector<float> {});
-    job.pidwrite.emplace(p.pid, vector<float> {});
-    // Then, we need to pad the entry with 0's for every tick
-    // that's already passed.
-    job.pidcpu[p.pid].resize(job.tick - 1, 0.0);
-    job.pidmem[p.pid].resize(job.tick - 1, 0.0);
-    job.pidread[p.pid].resize(job.tick - 1, 0.0);
-    job.pidwrite[p.pid].resize(job.tick - 1, 0.0);
-    // Now we're all initialised to add the new data, just like
-    // any other PID. Set job.rewrite to "true" so we know to
-    // rewrite our whole output later, adding a new column.
-    job.rewrite = true;
-}
-
-void get_data(struct jobstats &job)
-{
-    // Iterate over the directories in /proc.
+    for (auto & [Comm, Vec] : Job.Cpu.Data) // Tick everything forward by one.
+        Vec.push_back(0.0);                 // Then we can add the new values.
+    for (auto & [Comm, Vec] : Job.Mem.Data)
+        Vec.push_back(0.0);
+    for (auto & [Comm, Vec] : Job.Read.Data)
+        Vec.push_back(0.0);
+    for (auto & [Comm, Vec] : Job.Write.Data)
+        Vec.push_back(0.0);
     for (const auto & pd : filesystem::directory_iterator("/proc/"))
     {
         const auto full_path = pd.path();
         const string pid = full_path.filename();
-        // The PID directories are the ones with an all numeric name.
-        if (! all_of(pid.begin(), pid.end(), ::isdigit))
+        if (! all_of(pid.begin(), pid.end(), ::isdigit)) // Not a PID
            continue;
-        struct pidstats p;
-        // Reading the PID stats can go wrong in multple ways. Some PIDs
-        // such as "sshd" and "slurmstepd" don't let us access their I/O
-        // stats. Or, we could get part way through reading data, get
-        // preempted, and when we resume the PID we're reading has now
-        // terminated. The cleanest way to deal with this is to catch any
-        // errors and then just skip those PIDs.
+        string comm = "Unknown";      // These should always get overwritten
+        float cpu, mem, read, write;  // or not used, but this way we can
+        cpu = mem = read = write = 0; // tell if it ever goes wrong.
         try
         {
-            // We only care about PIDs in the same cgroup as us.
-            const auto pid_root = string(full_path);
-            const auto cgroup = file_to_string(pid_root + "/cgroup");
-            if (cgroup != job.cgroup)
-                continue;
-            get_pid_data(pid, p, pid_root);
+            const auto cgroup = file_to_string("/proc/" + pid + "/cgroup");
+            if (cgroup != Job.Cgroup)
+                continue; // We don't care
+            string pid_root = "/proc/" + pid;
+            comm = file_to_string(pid_root + "/comm");
+            // /proc/PID/stat has lots of entries on a single line.
+            const auto stats = split_on_space(file_to_string(pid_root + "/stat"));
+            // The runtime of our pid is (system uptime) - (start time of PID)
+            const float runtime = get_uptime() - stof(stats.at(21)); 
+            // Total CPU time is the sum of user time and system time
+            const float cputime = stof(stats.at(13)) + stof(stats.at(14));
+            cpu = cputime / runtime; // Same as in "ps", NOT "top"
+            mem = (stof(stats.at(23)) * 4) / 1024 / 1024; // 1 page = 4kb
+            // /prod/PID/io has entries in the format "name: value".
+            const auto iostats = split_on_space(file_to_string(pid_root + "/io"));
+            read = stof(iostats.at(9)) / 1024 / 1024 / 1024; // Want GB
+            write = stof(iostats.at(11)) / 1024 / 1024 / 1024;
         }
         catch (const exception &e)
         {
-            continue;
+            continue; // A PID that's unreadable or stops existing.
         }
-        // From this point on, exceptions are serious (e.g. memory errors)
-        // so we stop trying to catch them.
-        //
-        // Now that we've got data, there a 3 scenarios for a PID:
-        // 
-        // 1. This is the first time we've ever seen it. We need to create
-        //    new entries in the data maps.
-        if (job.pidcomm.find(pid) == job.pidcomm.end())
-            emplace_new_pid(p, job);
-        // 2. This is an existing PID (or a PID that we've just initialised).
-        //    We add our new values.
-        job.pidcpu[pid].push_back(p.cpu);
-        job.pidmem[pid].push_back(p.mem);
-        job.pidread[pid].push_back(p.read);
-        job.pidwrite[pid].push_back(p.write);
-        // If full loggin is enabled, log some interesting stuff
-        if (job.full_logging)
+        if (!Job.Cpu.Data.count(comm)) // First time PID seen.
         {
-            log_threads(job, pid, p.threads);
-            log_open_files(job, pid);
+            Job.Cpu.Data.emplace(comm, vector<float>(Job.Tick, 0.0));
+            Job.Mem.Data.emplace(comm, vector<float>(Job.Tick, 0.0));
+            Job.Read.Data.emplace(comm, vector<float>(Job.Tick, 0.0));
+            Job.Write.Data.emplace(comm, vector<float>(Job.Tick, 0.0));
+            Job.Rewrite = true; // Historical stats have changed
         }
+        Job.Cpu.Data[comm].back() += cpu;     // Now, we just add new values
+        Job.Mem.Data[comm].back() += mem;     // as we find them to get the
+        Job.Read.Data[comm].back() += read;   // grand total.
+        Job.Write.Data[comm].back() += write;
     }
-    // 3. We have a PIDs that used to exist but has now exited. That means
-    //    that the previous loop failed to get new values because there's
-    //    no entries in /proc any more. We fix that by checking whether every
-    //    vector in every map has the same number of data points as our tick.
-    //    If they don't it's because it's not been updated yet, so resize the
-    //    vector to the same size and pad the new entry with 0. This also
-    //    has the side effect that we guarantee that every vector has exactly 
-    //    the correct number of entries.
-    for (auto & [pid, data] : job.pidcpu)
-        if (data.size() != job.tick)
-            data.resize(job.tick, 0.0); 
-    for (auto & [pid, data] : job.pidmem)
-        if (data.size() != job.tick)
-            data.resize(job.tick, 0.0); 
-    for (auto & [pid, data] : job.pidread)
-        if (data.size() != job.tick)
-            data.resize(job.tick, 0.0); 
-    for (auto & [pid, data] : job.pidwrite)
-        if (data.size() != job.tick)
-            data.resize(job.tick, 0.0); 
-    // Now, we know for sure that every PID that's ever run has exactly the
-    // same number of data points, which is the same as our current "tick".
 }
 
-// Halve the size of our in-memory data structures and tweak our other
-// variables accordingly
-void shrink_data(jobstats &job)
+inline void shrink_data(Jobstats &Job)
 {
-    // Tick has to be even
-    if ((job.tick % 2) == 1)
-        job.tick++;
-    // Shrink our data
-    job.tick /= 2;
-    for (auto & [pid, data] : job.pidcpu)
-        if (shrink_vector(data) != job.tick)
-            throw runtime_error("Data vector is wrong size\n");
-    for (auto & [pid, data] : job.pidmem)
-        if (shrink_vector(data) != job.tick)
-            throw runtime_error("Data vector is wrong size\n");
-    for (auto & [pid, data] : job.pidread)
-        if (shrink_vector(data) != job.tick)
-            throw runtime_error("Data vector is wrong size\n");
-    for (auto & [pid, data] : job.pidwrite)
-        if (shrink_vector(data) != job.tick)
-            throw runtime_error("Data vector is wrong size\n");
-    // Now sample half as often
-    job.sample_rate *= 2;
-    // This will require a full rewite of our output files
-    job.rewrite = true;
+    if ((Job.Tick % 2) == 1) // MUST be even
+        Job.Tick++;
+    Job.Tick /= 2;
+    for (auto & [pid, data] : Job.Cpu.Data)
+        shrink_vector(data);
+    for (auto & [pid, data] : Job.Mem.Data)
+        shrink_vector(data);
+    for (auto & [pid, data] : Job.Read.Data)
+        shrink_vector(data);
+    for (auto & [pid, data] : Job.Write.Data)
+        shrink_vector(data);
+    Job.Rate *= 2;
+    Job.Rewrite = true; // History has changed. Full rewrite needed.
 }
 
-// Halve the size of a string vector by keeping every other value
-template<typename T> size_t shrink_vector(vector<T> &v)
+inline void write_output(struct Jobstats &Job)
 {
-    // Need an even number of elements - can just duplicate last if needed
-    if ( (v.size() % 2) == 1)
-        v.push_back(v.back());
-    // In order, make the first half of the entries into the data we want to
-    // keep, namely every other entry, so:
-    //     1, 2, 3, 4, 5, 6, 7, 8, 9, 10
-    // becomes:
-    //     2, 4, 6, 8, 10, 6, 7, 8, 9, 10
-    for (size_t i = 0; i < v.size(); i++)
-        // Because vectors are base 0 and not base 1, we want the odd entries
-        if ( (i % 2) == 1 )
-            // Base 1, this is value i + 1. We want it to go in position
-            // n / 2, or (i + 1)/2. Because we're base 0, that's one less, or
-            // ( (i + 1) / 2 ) - 1
-            v.at(((i+1)/2)-1) = v.at(i);
-    // Now just throw away the last half of the data
-    v.resize(v.size()/2);
-    return v.size();
-}
-
-void log_open_files(jobstats &job, const string &pid)
-{
-    for (const auto & p : filesystem::directory_iterator("/proc/" + pid + "/fd/"))
+    if (Job.Rewrite) // We have historical data to write
     {
-        // If this is the first time we've seen the files for this PID,
-        // initialise our data structure
-        if (job.pidfiles.find(pid) == job.pidfiles.end())
-            job.pidfiles.emplace(pid, vector<string> {});
-        // The file descriptors are all links to real files. Read this.
-        string link = string(p.path());
-        char buff[PATH_MAX];
-        ssize_t len = ::readlink(link.c_str(), buff, sizeof(buff)-1);
-        // This could go wrong in multiple ways, including the process ending
-        // before we can read the link. So if the read fails, just silently
-        // abort.
-        if (len == -1)
-            continue;
-        // If we got exactly PATH_MAX characters, we can't append a NULL. We
-        // have to overwrite the last character.
-        if (len == PATH_MAX)
-            len -= 1;
-        buff[len] = '\0';
-        string file = string(buff);
-        // We only want to log the first time we see a file handle.
-        bool newfile = true;
-        for (const auto f : job.pidfiles[pid]) 
-            if (f == file)
-                newfile = false;
-        if (newfile)
-        {
-            // Add and log
-            job.pidfiles[pid].push_back(file);
-            job.log << job.tick << ":" << job.pidcomm[pid] << "-" << pid
-                    << " " << file << endl;
-            job.log.flush();
-        }
+        rewrite_tab(Job.Cpu, Job.Tick); 
+        rewrite_tab(Job.Mem, Job.Tick); 
+        rewrite_tab(Job.Read, Job.Tick); 
+        rewrite_tab(Job.Write, Job.Tick); 
+        Job.Rewrite = false;
     }
-}
-
-void log_threads(jobstats &job, const string &pid, const string &threads)
-{
-    // If the first time we've seen it, initialise.
-    if (job.pidthreads.find(pid) == job.pidthreads.end())
-        job.pidthreads.emplace(pid, string {});
-    // If it's changed, update and log.
-    if (threads != job.pidthreads.at(pid))
+    else // Just need the latest data appending
     {
-        job.pidthreads.at(pid) = threads;
-        job.log << job.tick << ":" << job.pidcomm.at(pid) << "-" << pid
-                << " threads=" << threads << endl;
-        job.log.flush();
+        append_tab(Job.Cpu, Job.Tick); 
+        append_tab(Job.Mem, Job.Tick); 
+        append_tab(Job.Read, Job.Tick); 
+        append_tab(Job.Write, Job.Tick); 
     }
 }
 
-void backup_output(struct jobstats &job)
+void rewrite_tab(Metric &met, unsigned long long int &current_tick) 
 {
-    // Because we can be terminated at any time, we need to make sure that
-    // destructive file operations are atomic. So, we start by atomically
-    // moving the current data to ".bak". We need to check it exists first,
-    // because on the 1st tick it doesn't.
-    if (filesystem::exists(job.cpufile))
-        filesystem::rename(job.cpufile, job.cpufile + ".bak");
-    if (filesystem::exists(job.memfile))
-        filesystem::rename(job.memfile, job.memfile + ".bak");
-    if (filesystem::exists(job.readfile))
-        filesystem::rename(job.readfile, job.readfile + ".bak");
-    if (filesystem::exists(job.writefile))
-        filesystem::rename(job.writefile, job.writefile + ".bak");
-}
-
-void delete_backup(struct jobstats &job)
-{
-    // We atomically remove the ".bak" file, because we know that we've
-    // finished outputting the new data. We still have to check that it
-    // exists as before because of the 1st tick case.
-    if (filesystem::exists(job.cpufile + ".bak"))
-        filesystem::remove(job.cpufile + ".bak");
-    if (filesystem::exists(job.memfile + ".bak"))
-        filesystem::remove(job.memfile + ".bak");
-    if (filesystem::exists(job.readfile + ".bak"))
-        filesystem::remove(job.readfile + ".bak");
-    if (filesystem::exists(job.writefile + ".bak"))
-        filesystem::remove(job.writefile + ".bak");
-}
-
-template<typename T> void rewrite_tab(string &tabfile, map<string, string> &pidcomm,
-                 map<string, vector<T>> &data, string &req,
-                 unsigned long long int &current_tick) 
-{
-        ofstream tab(tabfile);
-        if (!tab.is_open())
-            throw runtime_error("Open of CPU tab file failed\n");
-        tab << "#TIME\tREQUESTED"; // Header
-        for (const auto & [pid, comm] : pidcomm)
-            tab << "\t" << comm << "-" << pid;
-        tab << "\n";
-        // Build the output by line.
-        for (unsigned long long int tick = 1; tick <= current_tick; tick++)
-        {
-            tab << tick << "\t" << req;
-            for (const auto & [pid, value] : data)
-            {
-                auto d = value.at(tick - 1); // Vector is base 0
-                tab << "\t" << d;
-            }
-            tab << "\n";
-        }
-        tab.close();
-}
-
-template<typename T> void append_tab(string &tabfile, map<string, vector<T>> &data,
-                string &req, unsigned long long int &current_tick) 
-{
-    ofstream tab(tabfile, ios::app);
+    if (filesystem::exists(met.File)) // Backup file, we may get killed
+        filesystem::rename(met.File, met.File + ".bak");
+    ofstream tab(met.File);
     if (!tab.is_open())
-        throw runtime_error("Open of CPU tab file failed\n");
-    tab << current_tick << "\t" << req;
-    for (const auto & [pid, value] : data)
+        throw runtime_error("Open of tab file failed\n");
+    tab << "#TIME\tREQUESTED";
+    for (const auto & [Comm, Vec] : met.Data)
+        tab << "\t" << Comm;
+    tab << "\n";
+    for (unsigned long long int tick = 1; tick <= current_tick; tick++)
     {
-        auto d = value.back();
-        tab << "\t" << d;
+        tab << tick << "\t" << met.Req;
+        for (const auto & [Comm, Vec] : met.Data)
+            tab << "\t" << Vec.at(tick - 1); // Vector is base 0
+        tab << "\n";
     }
+    tab.close();
+    filesystem::remove(met.File + ".bak"); // No throw if not present
+}
+
+void append_tab(Metric &met, unsigned long long int &current_tick) 
+{
+    ofstream tab(met.File, ios::app);
+    if (!tab.is_open())
+        throw runtime_error("Open of tab file failed\n");
+    tab << current_tick << "\t" << met.Req;
+    for (const auto & [pid, value] : met.Data)
+        tab << "\t" << value.back();
     tab << "\n";
     tab.close();
 }
 
-void write_output(struct jobstats &job)
+template<typename T> void shrink_vector(vector<T> &v)
 {
-    // Output our CPU data. Note that (importantly) a C++ map is implemented
-    // as a binary tree and is guaranteed to be ordered. Thus, because the
-    // keys in each of pidcomm, pidcpu and pidmem are the same set of PIDs,
-    // we can iterate over the maps and know that we'll get them in exactly
-    // the same order each time. (This would not be true for a hash table,
-    // which is an unordered_map in C++).
-    //
-    // There are two scenarios at this point:
-    //
-    // 1. If we have new PID data that needs backfilling to the start of
-    //    logging then we need to perform a full rewrite of our stats to the
-    //    output files. This is is indicated by setting job.rewrite to "true". 
-    if (job.rewrite)
-    {
-        backup_output(job); // We could be killed whilst writing
-        rewrite_tab(job.cpufile, job.pidcomm, job.pidcpu, job.cpus, job.tick); 
-        rewrite_tab(job.memfile, job.pidcomm, job.pidmem, job.mem, job.tick); 
-        rewrite_tab(job.readfile, job.pidcomm, job.pidread, job.read, job.tick); 
-        rewrite_tab(job.writefile, job.pidcomm, job.pidwrite, job.write, job.tick); 
-        delete_backup(job);      // Remove the copies
-        job.rewrite = false; // Unset "rewrite" for the next pass
-    }
-    // 2. We don't. We can simply append the next tick of data to the end of
-    //    the file. There is a small risk that we get killed in the middle of
-    //    doing this, but it's a tiny operation that only runs once a second,
-    //    and the worst it can do is add an incomplete last line. Making a
-    //    backup would be almost as expensive as writing a large file from
-    //    scratch, so defeats the point.
-    else
-    {
-        append_tab(job.cpufile, job.pidcpu, job.cpus, job.tick); 
-        append_tab(job.memfile, job.pidmem, job.mem, job.tick); 
-        append_tab(job.readfile, job.pidread, job.read, job.tick); 
-        append_tab(job.writefile, job.pidwrite, job.write, job.tick); 
-    }
+    if ( (v.size() % 2) == 1) // MUST be even
+        v.push_back(v.back());
+    // Make the first half of the data into every other entry, so:
+    // 1, 2, 3, 4, 5, 6 =>  2, 4, 6, 4, 5, 6
+    for (size_t i = 0; i < v.size(); i++)
+        if ( (i % 2) == 1 ) // Vectors are base 0 and we want the odd entries
+            // In base 1, entry i => i/2, so 2 => 1, 4 => 2, 6 => 3, etc.
+            // Base 0, that's:  i => ( (i+1) / 2 ) - 1
+            v.at(((i+1)/2)-1) = v.at(i);
+    v.resize(v.size()/2); // Throw away last half of the data.
 }
 
-// We need to know how long the system has been up to calculate %CPU
 const unsigned long long get_uptime(void)
 {
     struct sysinfo info;
     if (sysinfo(&info) == -1)
         throw runtime_error("Could not get sysinfo\n");
-    // For compatibility with the accounting statistics, we want this in
-    // kernel ticks, so we multiply by the clock tick
-    const unsigned long long uptime = info.uptime * sysconf(_SC_CLK_TCK);
-    return(uptime);
+    return info.uptime * sysconf(_SC_CLK_TCK);
 }
     
 // Read the whole of a file into a single string, removing the final '\n'
@@ -585,13 +276,18 @@ const string file_to_string(const string &path)
     return(contents.substr(0,contents.length()-1));
 }
  
-// Get a file as a vector of strings. Splits on any character in the [:space:]
-// character set, which includes all horizontal and vertical padding
-// including ' ', '\t' and '\n'.
+// Get a file as a vector of strings, splits on any character in [:space:]
 const vector<string> split_on_space(const string &path)
 {
     istringstream iss(path);
-    const vector<string> results((istream_iterator<string>(iss)),
+    return vector<string>((istream_iterator<string>(iss)),
         istream_iterator<string>());
-    return(results);
+}
+
+void rotate_output(string &s)
+{
+    for (int i = 1; i < 10; i++)
+        if (!filesystem::exists(s + "." + to_string(i)))
+            return filesystem::rename(s, s + "." + to_string(i));
+    throw runtime_error("Exceed maximum rotate_output\n");
 }
