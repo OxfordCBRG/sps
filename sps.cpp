@@ -28,12 +28,12 @@ struct jobstats { ofstream log; string outputdir;
 		  map<string, string> pidcomm;
 		  map<string, string> pidthreads;
                   map<string, vector<string>> pidfiles;
-                  map<string, vector<string>> pidcpu;
-                  map<string, vector<string>> pidmem;
-                  map<string, vector<string>> pidread;
-                  map<string, vector<string>> pidwrite; };
-struct pidstats { string pid; string comm; string cpu; string mem;
-                  string read; string write; string threads; };
+                  map<string, vector<float>> pidcpu;
+                  map<string, vector<float>> pidmem;
+                  map<string, vector<float>> pidread;
+                  map<string, vector<float>> pidwrite; };
+struct pidstats { string pid; string comm; string threads;
+                  float cpu; float mem; float read; float write; };
 
 inline const string mypid() {return to_string(getpid()); }
 inline const string get_env_var(const char *c)
@@ -50,16 +50,16 @@ void get_pid_data(const string&, pidstats&, const string&);
 void emplace_new_pid(pidstats&, jobstats&);
 void get_data(struct jobstats&);
 void shrink_data(struct jobstats&);
-size_t shrink_string_vector(vector<string> &);
+template<typename T> size_t shrink_vector(vector<T> &);
 void log_open_files(jobstats&, const string&);
 void log_threads(jobstats&, const string&, const string&);
 void write_output(struct jobstats&);
 void backup_output(struct jobstats&);
 void delete_backup(struct jobstats&);
-void rewrite_tab(string&, map<string, string>&, map<string, vector<string>>&,
-                 string&, unsigned long long int&);
-void append_tab(string&, map<string, vector<string>>&, string&,
-                unsigned long long int&);
+template<typename T> void rewrite_tab(string&, map<string, string>&, map<string,
+                 vector<T>>&, string&, unsigned long long int&);
+template<typename T>void append_tab(string&, map<string, vector<T>>&,
+                string&, unsigned long long int&);
 
 int main(int argc, char *argv[])
 {
@@ -197,7 +197,7 @@ void init_data(struct jobstats &job)
     if (job.mem == "")
         job.mem = "0";
     else
-        job.mem = to_string(stof(job.mem)/1024); // RSS in in KB, not B.
+        job.mem = to_string(stof(job.mem)/1024/1024/1024); // Want GB, not B.
     // We need values for "requested"
     job.read = "0";
     job.write = "0";
@@ -215,14 +215,11 @@ void log_startup(struct jobstats &job)
     job.log << string(ctime(&job.start));
     job.log << "SLURM_JOB_ID\t\t" << job.id << endl;
     job.log << "REQ_CPU_CORES\t\t" << job.cpus << endl;
-    job.log << "REQ_MEMORY_KB\t\t" << job.mem << endl;
-    job.log << "CPU_OUT_FILE\t\t" << job.cpufile << endl;
-    job.log << "MEM_OUT_FILE\t\t" << job.memfile << endl;
-    job.log << "READ_OUT_FILE\t\t" << job.readfile << endl;
-    job.log << "WRITE_OUT_FILE\t\t" << job.writefile << endl;
-    job.log << "SPS_PROCESS\t\t" << mypid() << endl;
+    job.log << "REQ_MEMORY_GB\t\t" << job.mem << endl;
     if (job.full_logging)
         job.log << "SPS_FULL_LOGGING\ttrue\n";
+    if (job.unlimited_data)
+        job.log << "SPS_UNLIMITED_DATA\ttrue\n";
     job.log << "Starting profiling...\n";
     job.log.flush();
 }
@@ -235,24 +232,23 @@ void get_pid_data(const string& pid, struct pidstats &p, const string &pid_root)
     // them as a vector "stats" and then access them later via at().
     const auto stats = split_on_space(file_to_string(pid_root + "/stat"));
     // The runtime of our pid is (system uptime) - (start time of PID)
-    const unsigned long long runtime = get_uptime() - 
-                                       stoull(stats.at(21)); 
+    const float runtime = get_uptime() - stof(stats.at(21)); 
     // Total CPU time is the sum of user time and system time
-    const unsigned long long cputime = stoull(stats.at(13)) +
-                                       stoull(stats.at(14));
+    const float cputime = stof(stats.at(13)) + stof(stats.at(14));
     p.threads = stats.at(19);
     // CPU is the number of whole CPUs being used and is calculated
     // using total used CPU time / total runtime.
     // This is the same as in "ps", NOT the same as "top".
-    p.cpu = to_string(((float)cputime) / runtime);
-    // RSS is in pages. 1 page = 4096 bytes, or 4 kb.
-    p.mem = to_string(stol(stats.at(23)) * 4);
+    p.cpu = cputime / runtime;
+    // RSS is in pages. 1 page = 4096 bytes, or 4 kb. Then, we want GB.
+    p.mem = (stof(stats.at(23)) * 4) / 1024 / 1024;
     // /prod/PID/io has entries in the format "name: value". We turn
     // these into a vector on space (including newline) so we can
     // access the values directly without further manipulation.
+    // These are in bytes, but we want GB.
     const auto iostats = split_on_space(file_to_string(pid_root + "/io"));
-    p.read = iostats.at(9);
-    p.write = iostats.at(11);
+    p.read = stof(iostats.at(9)) / 1024 / 1024 / 1024;
+    p.write = stof(iostats.at(11)) / 1024 / 1024 / 1024;
 }
 
 void emplace_new_pid(pidstats &p, jobstats &job)
@@ -261,16 +257,16 @@ void emplace_new_pid(pidstats &p, jobstats &job)
     if (job.full_logging)
         job.log << job.tick << ":" << job.pidcomm.at(p.pid) << "-"
                 << p.pid << " started\n";
-    job.pidcpu.emplace(p.pid, vector<string> {});
-    job.pidmem.emplace(p.pid, vector<string> {});
-    job.pidread.emplace(p.pid, vector<string> {});
-    job.pidwrite.emplace(p.pid, vector<string> {});
+    job.pidcpu.emplace(p.pid, vector<float> {});
+    job.pidmem.emplace(p.pid, vector<float> {});
+    job.pidread.emplace(p.pid, vector<float> {});
+    job.pidwrite.emplace(p.pid, vector<float> {});
     // Then, we need to pad the entry with 0's for every tick
     // that's already passed.
-    job.pidcpu[p.pid].resize(job.tick - 1, "");
-    job.pidmem[p.pid].resize(job.tick - 1, "");
-    job.pidread[p.pid].resize(job.tick - 1, "");
-    job.pidwrite[p.pid].resize(job.tick - 1, "");
+    job.pidcpu[p.pid].resize(job.tick - 1, 0.0);
+    job.pidmem[p.pid].resize(job.tick - 1, 0.0);
+    job.pidread[p.pid].resize(job.tick - 1, 0.0);
+    job.pidwrite[p.pid].resize(job.tick - 1, 0.0);
     // Now we're all initialised to add the new data, just like
     // any other PID. Set job.rewrite to "true" so we know to
     // rewrite our whole output later, adding a new column.
@@ -334,21 +330,21 @@ void get_data(struct jobstats &job)
     //    no entries in /proc any more. We fix that by checking whether every
     //    vector in every map has the same number of data points as our tick.
     //    If they don't it's because it's not been updated yet, so resize the
-    //    vector to the same size and pad the new entry with "0". This also
+    //    vector to the same size and pad the new entry with 0. This also
     //    has the side effect that we guarantee that every vector has exactly 
     //    the correct number of entries.
     for (auto & [pid, data] : job.pidcpu)
         if (data.size() != job.tick)
-            data.resize(job.tick, ""); 
+            data.resize(job.tick, 0.0); 
     for (auto & [pid, data] : job.pidmem)
         if (data.size() != job.tick)
-            data.resize(job.tick, ""); 
+            data.resize(job.tick, 0.0); 
     for (auto & [pid, data] : job.pidread)
         if (data.size() != job.tick)
-            data.resize(job.tick, ""); 
+            data.resize(job.tick, 0.0); 
     for (auto & [pid, data] : job.pidwrite)
         if (data.size() != job.tick)
-            data.resize(job.tick, ""); 
+            data.resize(job.tick, 0.0); 
     // Now, we know for sure that every PID that's ever run has exactly the
     // same number of data points, which is the same as our current "tick".
 }
@@ -363,16 +359,16 @@ void shrink_data(jobstats &job)
     // Shrink our data
     job.tick /= 2;
     for (auto & [pid, data] : job.pidcpu)
-        if (shrink_string_vector(data) != job.tick)
+        if (shrink_vector(data) != job.tick)
             throw runtime_error("Data vector is wrong size\n");
     for (auto & [pid, data] : job.pidmem)
-        if (shrink_string_vector(data) != job.tick)
+        if (shrink_vector(data) != job.tick)
             throw runtime_error("Data vector is wrong size\n");
     for (auto & [pid, data] : job.pidread)
-        if (shrink_string_vector(data) != job.tick)
+        if (shrink_vector(data) != job.tick)
             throw runtime_error("Data vector is wrong size\n");
     for (auto & [pid, data] : job.pidwrite)
-        if (shrink_string_vector(data) != job.tick)
+        if (shrink_vector(data) != job.tick)
             throw runtime_error("Data vector is wrong size\n");
     // Now sample half as often
     job.sample_rate *= 2;
@@ -381,7 +377,7 @@ void shrink_data(jobstats &job)
 }
 
 // Halve the size of a string vector by keeping every other value
-size_t shrink_string_vector(vector<string> &v)
+template<typename T> size_t shrink_vector(vector<T> &v)
 {
     // Need an even number of elements - can just duplicate last if needed
     if ( (v.size() % 2) == 1)
@@ -488,8 +484,8 @@ void delete_backup(struct jobstats &job)
         filesystem::remove(job.writefile + ".bak");
 }
 
-void rewrite_tab(string &tabfile, map<string, string> &pidcomm,
-                 map<string, vector<string>> &data, string &req,
+template<typename T> void rewrite_tab(string &tabfile, map<string, string> &pidcomm,
+                 map<string, vector<T>> &data, string &req,
                  unsigned long long int &current_tick) 
 {
         ofstream tab(tabfile);
@@ -506,17 +502,14 @@ void rewrite_tab(string &tabfile, map<string, string> &pidcomm,
             for (const auto & [pid, value] : data)
             {
                 auto d = value.at(tick - 1); // Vector is base 0
-                if (d == "")
-                    tab << "\t0";
-                else
-                    tab << "\t" << d;
+                tab << "\t" << d;
             }
             tab << "\n";
         }
         tab.close();
 }
 
-void append_tab(string &tabfile, map<string, vector<string>> &data,
+template<typename T> void append_tab(string &tabfile, map<string, vector<T>> &data,
                 string &req, unsigned long long int &current_tick) 
 {
     ofstream tab(tabfile, ios::app);
@@ -526,10 +519,7 @@ void append_tab(string &tabfile, map<string, vector<string>> &data,
     for (const auto & [pid, value] : data)
     {
         auto d = value.back();
-        if (d == "")
-            tab << "\t0";
-        else
-            tab << "\t" << d;
+        tab << "\t" << d;
     }
     tab << "\n";
     tab.close();

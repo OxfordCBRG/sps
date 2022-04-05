@@ -34,14 +34,14 @@ for FILE in $@; do
       do_ascii_plot "$FILE" "CPU (cores)" &
       do_png_plot "$FILE" "CPU (cores)" &
     elif [[ "$FILE" =~ "mem.tsv" ]]; then
-      do_ascii_plot "$FILE" "Memory (kilobytes)" &
-      do_png_plot "$FILE" "Memory (kilobytes)" &
+      do_ascii_plot "$FILE" "Memory (GB)" &
+      do_png_plot "$FILE" "Memory (GB)" &
     elif [[ "$FILE" =~ "read.tsv" ]]; then
-      do_ascii_plot "$FILE" "Data read (bytes)" &
-      do_png_plot "$FILE" "Data read (bytes)" &
+      do_ascii_plot "$FILE" "Data read (GB)" &
+      do_png_plot "$FILE" "Data read (GB)" &
     elif [[ "$FILE" =~ "write.tsv" ]]; then
-      do_ascii_plot "$FILE" "Data written (bytes)" &
-      do_png_plot "$FILE" "Data written (bytes)" &
+      do_ascii_plot "$FILE" "Data written (GB)" &
+      do_png_plot "$FILE" "Data written (GB)" &
     else
       echo Unknown input "$FILE"
     fi
