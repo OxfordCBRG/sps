@@ -2,8 +2,9 @@
 
 module load gnuplot
 
+# No key for ASCII plots
 do_ascii_plot () {
-  COMM="set terminal dumb 80 30; set title '$2'; set xlabel 'Job profiling step'; set key above; plot "
+  COMM="set terminal dumb 80 30; set title '$2'; set xlabel 'Job profiling step'; set key off; plot "
   read -r -a array <<< `head -1 $1`
   N="${#array[@]}"
   for X in `seq 2 $N`; do
@@ -13,8 +14,11 @@ do_ascii_plot () {
   echo ${COMM:0:-1} | gnuplot 2>/dev/null | tr '[:cntrl:]' '\n' &> "$FILE".ascii
 }
 
+# For PNG, set plot width and height to 0.1. This is not well documented, but
+# appears to set the maximum size of the box to 10% of each axis respectively
+# and to correctly resize the text where possible / not show it where not.
 do_png_plot () {
-  COMM="set terminal png size 1200,800 enhanced font 'Helvetica,16'; set output '${FILE}.png'; set title '$2'; set title font 'Helvetica,20'; set xlabel 'Job profiling step'; set key outside; set key right top; plot "
+  COMM="set terminal png size 1200,800 enhanced font 'Helvetica,12'; set output '${FILE}.png'; set title '$2'; set title font 'Helvetica,20'; set xlabel 'Job profiling step'; set key outside right top width 0.1 height 0.1; plot "
   read -r -a array <<< `head -1 $1`
   N="${#array[@]}"
   for X in `seq 2 $N`; do

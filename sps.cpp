@@ -268,10 +268,10 @@ void emplace_new_pid(pidstats &p, jobstats &job)
     job.pidwrite.emplace(p.pid, vector<string> {});
     // Then, we need to pad the entry with 0's for every tick
     // that's already passed.
-    job.pidcpu[p.pid].resize(job.tick - 1, "0");
-    job.pidmem[p.pid].resize(job.tick - 1, "0");
-    job.pidread[p.pid].resize(job.tick - 1, "0");
-    job.pidwrite[p.pid].resize(job.tick - 1, "0");
+    job.pidcpu[p.pid].resize(job.tick - 1, "");
+    job.pidmem[p.pid].resize(job.tick - 1, "");
+    job.pidread[p.pid].resize(job.tick - 1, "");
+    job.pidwrite[p.pid].resize(job.tick - 1, "");
     // Now we're all initialised to add the new data, just like
     // any other PID. Set job.rewrite to "true" so we know to
     // rewrite our whole output later, adding a new column.
@@ -340,16 +340,16 @@ void get_data(struct jobstats &job)
     //    the correct number of entries.
     for (auto & [pid, data] : job.pidcpu)
         if (data.size() != job.tick)
-            data.resize(job.tick, "0"); 
+            data.resize(job.tick, ""); 
     for (auto & [pid, data] : job.pidmem)
         if (data.size() != job.tick)
-            data.resize(job.tick, "0"); 
+            data.resize(job.tick, ""); 
     for (auto & [pid, data] : job.pidread)
         if (data.size() != job.tick)
-            data.resize(job.tick, "0"); 
+            data.resize(job.tick, ""); 
     for (auto & [pid, data] : job.pidwrite)
         if (data.size() != job.tick)
-            data.resize(job.tick, "0"); 
+            data.resize(job.tick, ""); 
     // Now, we know for sure that every PID that's ever run has exactly the
     // same number of data points, which is the same as our current "tick".
 }
@@ -505,7 +505,13 @@ void rewrite_tab(string &tabfile, map<string, string> &pidcomm,
         {
             tab << tick << "\t" << req;
             for (const auto & [pid, value] : data)
-                tab << "\t" << data[pid].at(tick - 1); // Vector is base 0
+            {
+                auto d = value.at(tick - 1); // Vector is base 0
+                if (d == "")
+                    tab << "\t0";
+                else
+                    tab << "\t" << d;
+            }
             tab << "\n";
         }
         tab.close();
@@ -519,7 +525,13 @@ void append_tab(string &tabfile, map<string, vector<string>> &data,
         throw runtime_error("Open of CPU tab file failed\n");
     tab << current_tick << "\t" << req;
     for (const auto & [pid, value] : data)
-        tab << "\t" << data[pid].at(current_tick - 1); // Vector is base 0
+    {
+        auto d = value.back();
+        if (d == "")
+            tab << "\t0";
+        else
+            tab << "\t" << d;
+    }
     tab << "\n";
     tab.close();
 }
