@@ -14,17 +14,12 @@ else
   JID=`echo sps`
 fi
 
-CPUOUT="${JID}-cpu.tsv"
-CPUTMP="${JID}-cpu.tsv.bak"
-MEMOUT="${JID}-mem.tsv"
-MEMTMP="${JID}-mem.tsv.bak"
-SPSLOG="${JID}.log"
-
 # We can now kill SPS by PID
+SPSLOG="${JID}.log"
 SPSPID=`grep SPS_PROCESS $SPSLOG | awk '{print $2}'`
 if [ -z $SPSPID ]; then
   # SPS broke. Bail out.
-  echo No SPS proccess ID found. Something went wrong.
+  echo No SPS proccess ID found in log. Something went wrong.
   exit 1
 fi
 # Double check that this PID hasn't been reused for something else. Then
@@ -34,28 +29,35 @@ if [ ! -z $PIDCOMM ] && [ $PIDCOMM == "sps" ]; then
   kill $SPSPID
 fi
 
-# If we got killed in the middle of a rewrite, there may be a backup file
-if [ -f $CPUTMP ]; then
-  # There might also be a normal file. If so, it's corrupt.
-  if [ -f $CPUOUT]; then
-    rm -f $CPUOUT
+fix_output () {
+  OUT="${JID}-${1}.tsv"
+  BAK="${OUT}.bak"
+  # If we got killed in the middle of a rewrite, there may be a backup file
+  if [ -f $BAK ]; then
+    # There might also be a normal file. If so, it's corrupt.
+    if [ -f $OUT ]; then
+      rm -f $OUT 
+    fi
+    # Either way there isn't now, so restore the backup.
+    mv $BAK $OUT 
   fi
-  # Either way there isn't now, so restore the backup.
-  mv $CPUTMP $CPUOUT
-fi
-# Ditto for memory
-if [ -f $MEMTMP ]; then
-  if [ -f $MEMOUT]; then
-    rm -f $MEMOUT
+
+  # If it all went horribly wrong, there may be no output either
+  if [ ! -f $OUT ]; then
+    echo "No output $OUT found."
+    return 1
   fi
-  mv $MEMTMP $MEMOUT
-fi
 
-# If we got killed in the middle of an append, the last line may be corrupt.
-# There's no simple way to know if this happens as it could be in the last
-# number on the line, so the simplest thing is just to throw away the very
-# last line.
-sed -i '$d' $CPUOUT
-sed -i '$d' $MEMOUT
+  # If we got killed in the middle of an append, the last line may be corrupt.
+  # There's no simple way to know if this happens as it could be in the last
+  # number on the line, so the simplest thing is just to throw away the very
+  # last line.
+  sed -i '$d' $OUT
+}
 
-# We're done.
+fix_output "cpu" &
+fix_output "mem" &
+fix_output "read" &
+fix_output "write" &
+
+wait # For background tasks

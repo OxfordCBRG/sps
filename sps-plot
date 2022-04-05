@@ -19,10 +19,16 @@ do_plot () {
 
 for FILE in $@; do
   if [[ "$FILE" =~ "cpu.tsv" ]]; then
-    do_plot "$FILE" "CPU (cores)"
+    do_plot "$FILE" "CPU (cores)" &
   elif [[ "$FILE" =~ "mem.tsv" ]]; then
-    do_plot "$FILE" "Memory (kilobytes)"
+    do_plot "$FILE" "Memory (kilobytes)" &
+  elif [[ "$FILE" =~ "read.tsv" ]]; then
+    do_plot "$FILE" "Data read (bytes)" &
+  elif [[ "$FILE" =~ "write.tsv" ]]; then
+    do_plot "$FILE" "Data written (bytes)" &
   else
     do_plot "$FILE" ""
   fi
 done
+
+wait # For background processes

@@ -20,11 +20,15 @@ struct jobstats { ofstream log;
                   string cpus; string id; string arrayjob;
                   string arraytask; string cgroup; string mem;
                   string filestem; string cpufile; string memfile;
+                  string read; string write;
+                  string readfile; string writefile;
                   time_t start; unsigned long long tick; bool rewrite;
                   unsigned int samplerate;
                   map<string, string> pidcomm;
                   map<string, vector<string>> pidcpu;
-                  map<string, vector<string>> pidmem; };
+                  map<string, vector<string>> pidmem;
+                  map<string, vector<string>> pidread;
+                  map<string, vector<string>> pidwrite; };
 
 inline const string get_env_var(const char * c)
     { const char *p = getenv(c); return(string(p ? p : "0")); }
@@ -56,6 +60,8 @@ int main(int argc, char *argv[])
         job.log << "SAMPLE_RATE\t" << job.samplerate << endl;
         job.log << "CPU_OUT_FILE\t" << job.cpufile << endl;
         job.log << "MEM_OUT_FILE\t" << job.memfile << endl;
+        job.log << "READ_OUT_FILE\t" << job.readfile << endl;
+        job.log << "WRITE_OUT_FILE\t" << job.writefile << endl;
         // Don't chdir to / but do send STDIN, STDOUT and STDERR to /dev/null
         if (daemon(1,0) == -1)
             throw runtime_error("Failed to daemonise\n");
@@ -117,6 +123,11 @@ void init_data(struct jobstats &job)
     job.samplerate = job.samplerate == 0 ? 1 : job.samplerate; 
     job.cpufile = job.filestem + "-cpu.tsv";
     job.memfile = job.filestem + "-mem.tsv";
+    // We need a value for "requested"
+    job.read = "0";
+    job.write = "0";
+    job.readfile = job.filestem + "-read.tsv";
+    job.writefile = job.filestem + "-write.tsv";
 }
 
 void get_data(struct jobstats &job)
@@ -148,6 +159,9 @@ void get_data(struct jobstats &job)
             const auto cpu = ((float)cputime) / runtime;
             // RSS is in pages. 1 page = 4096 bytes, or 4 kb.
             const auto mem = stol(stats.at(23)) * 4;
+            const auto iostats = split_on_newline(file_to_string(pid_root + "/io"));
+            const auto read = iostats.at(9);
+            const auto write = iostats.at(11);
             // There a 3 scenarios for a PID:
             // 
             // 1. This is the first time we've ever seen it. Firstly, we
@@ -157,12 +171,16 @@ void get_data(struct jobstats &job)
                 job.pidcomm.emplace(pid, file_to_string(pid_root + "/comm"));
                 job.pidcpu.emplace(pid, vector<string> {});
                 job.pidmem.emplace(pid, vector<string> {});
+                job.pidread.emplace(pid, vector<string> {});
+                job.pidwrite.emplace(pid, vector<string> {});
                 // Then, we need to pad the entry with 0's for every tick
                 // that's already passed.
                 for (unsigned long long i = 1; i < job.tick; i++)
                 {
                     job.pidcpu[pid].push_back("0.0");
                     job.pidmem[pid].push_back("0");
+                    job.pidread[pid].push_back("0");
+                    job.pidwrite[pid].push_back("0");
                 }
                 // Now we're all initialised to add the new data, just like
                 // any other PID. Set job.rewrite to "true" so we know to
@@ -173,6 +191,8 @@ void get_data(struct jobstats &job)
             //    initialised). We just add our new values.
             job.pidcpu[pid].push_back(to_string(cpu));
             job.pidmem[pid].push_back(to_string(mem));
+            job.pidread[pid].push_back(read);
+            job.pidwrite[pid].push_back(write);
         }
     }
     // 3. We have a PID that used to exist but has now exited. That means
@@ -185,6 +205,12 @@ void get_data(struct jobstats &job)
         if (data.size() < job.tick)
             data.push_back("0.0"); 
     for (auto & [pid, data] : job.pidmem)
+        if (data.size() < job.tick)
+            data.push_back("0"); 
+    for (auto & [pid, data] : job.pidread)
+        if (data.size() < job.tick)
+            data.push_back("0"); 
+    for (auto & [pid, data] : job.pidwrite)
         if (data.size() < job.tick)
             data.push_back("0"); 
     // Now, we know for sure that every PID that's ever run has exactly the
@@ -201,6 +227,10 @@ void backup_output(struct jobstats &job)
         filesystem::rename(job.cpufile, job.cpufile + ".bak");
     if (filesystem::exists(job.memfile))
         filesystem::rename(job.memfile, job.memfile + ".bak");
+    if (filesystem::exists(job.readfile))
+        filesystem::rename(job.readfile, job.readfile + ".bak");
+    if (filesystem::exists(job.writefile))
+        filesystem::rename(job.writefile, job.writefile + ".bak");
 }
 
 void delete_backup(struct jobstats &job)
@@ -212,6 +242,10 @@ void delete_backup(struct jobstats &job)
         filesystem::remove(job.cpufile + ".bak");
     if (filesystem::exists(job.memfile + ".bak"))
         filesystem::remove(job.memfile + ".bak");
+    if (filesystem::exists(job.readfile + ".bak"))
+        filesystem::remove(job.readfile + ".bak");
+    if (filesystem::exists(job.writefile + ".bak"))
+        filesystem::remove(job.writefile + ".bak");
 }
 
 void rewrite_tab(string &tabfile, map<string, string> &pidcomm,
@@ -268,6 +302,8 @@ void write_output(struct jobstats &job)
         backup_output(job); // We could be killed whilst writing
         rewrite_tab(job.cpufile, job.pidcomm, job.pidcpu, job.cpus, job.tick); 
         rewrite_tab(job.memfile, job.pidcomm, job.pidmem, job.mem, job.tick); 
+        rewrite_tab(job.readfile, job.pidcomm, job.pidread, job.read, job.tick); 
+        rewrite_tab(job.writefile, job.pidcomm, job.pidwrite, job.write, job.tick); 
         delete_backup(job);      // Remove the copies
         job.rewrite = false; // Unset "rewrite" for the next pass
     }
@@ -281,6 +317,8 @@ void write_output(struct jobstats &job)
     {
         append_tab(job.cpufile, job.pidcpu, job.cpus, job.tick); 
         append_tab(job.memfile, job.pidmem, job.mem, job.tick); 
+        append_tab(job.readfile, job.pidread, job.read, job.tick); 
+        append_tab(job.writefile, job.pidwrite, job.write, job.tick); 
     }
 }
 
