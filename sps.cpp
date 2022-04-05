@@ -41,6 +41,7 @@ const vector<string> split_on_space(const string&);
 const string file_to_string(const string&);
 void rotate_output(string&);
 void init_logging(int, char**, jobstats&);
+void init_rc(struct jobstats&);
 void init_data(struct jobstats&);
 void log_startup(struct jobstats&);
 void get_pid_data(const string&, pidstats&, const string&);
@@ -62,6 +63,7 @@ int main(int argc, char *argv[])
     init_logging(argc, argv, job);
     try // Now we can log the exceptions
     {
+        init_rc(job);
         init_data(job);
         // Don't chdir to / but do send STDIN, STDOUT and STDERR to /dev/null
         if (daemon(1,0) == -1)
@@ -100,8 +102,8 @@ void rotate_output(string &s)
 void init_logging(int argc, char *argv[], jobstats &job)
 {
     // We need a log file (a daemon can't output to STDOUT). To do that, we
-    // need some key variables. This is a PITA. If we're being run by the
-    // Slurm spank plugin, the environment variables haven't been set yet
+    // need some key variables. This is a PITA. When the program is run by the
+    // Slurm spank plugin the environment variables haven't been set yet
     // so we have to use the values we've been passed by it instead.
     // These are passed as JOBID REQUESTED_CPUS ARRAY_ID ARRAY_TASK.
     // N.B. argv[0] is the executable name.
@@ -125,25 +127,6 @@ void init_logging(int argc, char *argv[], jobstats &job)
         job.cpus = "1";
         job.outputdir = "sps-local";
     }
-    // Check for override file and set sample rate and full logging
-    // accordingly.
-    if (filesystem::exists(".spsfull"))
-    {
-        job.full_logging = true;
-        job.samplerate = 5;
-        string s = file_to_string(".spsfull");
-        if ( s != "" && all_of(s.begin(), s.end(), ::isdigit))
-        {
-            int i = stoi(s);
-            if (i > 0 && i < 60)
-                job.samplerate = stoi(s);
-        }
-    }
-    else
-    {
-        job.full_logging = false;
-        job.samplerate = 5;
-    }
     // Now check whether the job output directory exists already. If it does,
     // rotate it out of the way (maximum 9 times).
     if (filesystem::exists(job.outputdir))
@@ -156,6 +139,46 @@ void init_logging(int argc, char *argv[], jobstats &job)
         exit(1); // Can't recover, can't log.
     // Don't care about I/O compatibility with C. Let's go fast.
     ios_base::sync_with_stdio(false);
+}
+
+void init_rc(struct jobstats &job)
+{
+    // Check for rc file and set sample rate and full logging accordingly.
+    job.full_logging = false;
+    job.samplerate = 5;
+    if (filesystem::exists("spsrc"))
+    {
+        // File layout is "OPTION VALUE" pairs, one pair per line.
+        const auto rc = split_on_space(file_to_string("spsrc"));
+        if (rc.empty())
+            return;
+        // Now iterate through the entries. This does, in fact, check all the
+        // values as if they were options, but it doesn't make any functional
+        // difference and allows us to recover from missing values.
+        for (long unsigned int i = 0; i < rc.size(); i++)
+        {
+            string opt = rc.at(i);
+            // If there's no next entry, we're done.
+            if (i + 1 >= rc.size())
+                return;
+            string val = rc.at(i + 1);
+            // Read options. Invalid options or values are silently ignored.
+            if (opt == "SPS_FULL_LOGGING")
+            {
+                if (val == "true")
+                    job.full_logging = true;
+            }
+            else if (opt == "SPS_SAMPLE_RATE")
+            {
+                if ( val != "" && all_of(val.begin(), val.end(), ::isdigit))
+                {
+                    int i = stoi(val);
+                    if (i > 0 && i <= 60)
+                        job.samplerate = i;
+                }
+            }
+        }
+    }
 }
 
 void init_data(struct jobstats &job)
@@ -184,16 +207,18 @@ void log_startup(struct jobstats &job)
 {
     job.log << "CBB Profiling started ";
     job.log << string(ctime(&job.start));
-    job.log << "SLURM_JOB_ID\t" << job.id << endl;
-    job.log << "REQ_CPU_CORES\t" << job.cpus << endl;
-    job.log << "REQ_MEMORY_KB\t" << job.mem << endl;
-    job.log << "CPU_OUT_FILE\t" << job.cpufile << endl;
-    job.log << "MEM_OUT_FILE\t" << job.memfile << endl;
-    job.log << "READ_OUT_FILE\t" << job.readfile << endl;
-    job.log << "WRITE_OUT_FILE\t" << job.writefile << endl;
-    job.log << "SPS_PROCESS\t" << to_string(getpid()) << endl;
-    job.log << "SPS_SAMPLE_RATE\t" << job.samplerate
+    job.log << "SLURM_JOB_ID\t\t" << job.id << endl;
+    job.log << "REQ_CPU_CORES\t\t" << job.cpus << endl;
+    job.log << "REQ_MEMORY_KB\t\t" << job.mem << endl;
+    job.log << "CPU_OUT_FILE\t\t" << job.cpufile << endl;
+    job.log << "MEM_OUT_FILE\t\t" << job.memfile << endl;
+    job.log << "READ_OUT_FILE\t\t" << job.readfile << endl;
+    job.log << "WRITE_OUT_FILE\t\t" << job.writefile << endl;
+    job.log << "SPS_PROCESS\t\t" << to_string(getpid()) << endl;
+    job.log << "SPS_SAMPLE_RATE\t\t" << job.samplerate
             << "s (faster events may not be detected)\n";
+    if (job.full_logging)
+        job.log << "SPS_FULL_LOGGING\ttrue\n";
     job.log << "Starting profiling...\n";
     job.log.flush();
 }
@@ -348,14 +373,8 @@ void log_open_files(jobstats &job, const string &pid)
             len -= 1;
         buff[len] = '\0';
         string file = string(buff);
-        // We only want to log the first time we see a file handle. We do this
-        // via exclusion.
+        // We only want to log the first time we see a file handle.
         bool newfile = true;
-        // There's a lot of open files in /proc and /dev. Ignore them.
-        if (file.find("/proc") != string::npos)
-            newfile = false;
-        if (file.find("/dev") != string::npos)
-            newfile = false;
         for (const auto f : job.pidfiles[pid]) 
             if (f == file)
                 newfile = false;
