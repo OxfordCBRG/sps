@@ -14,45 +14,51 @@ else
   JID=`echo sps`
 fi
 
-# We can now kill SPS by PID
 SPSLOG="${JID}.log"
-SPSPID=`grep SPS_PROCESS $SPSLOG | awk '{print $2}'`
-if [ -z $SPSPID ]; then
-  # SPS broke. Bail out.
-  echo No SPS proccess ID found in log. Something went wrong.
+SPSPID=`grep -s SPS_PROCESS "$SPSLOG" | awk '{print $2}'`
+# Check non-value
+if [ -z "$SPSPID" ]; then
+  echo Could not determine SPS proccess ID
   exit 1
 fi
-# Double check that this PID hasn't been reused for something else. Then
-# kill it.
-PIDCOMM=`ps -p $SPSPID -h -o comm`
-if [ ! -z $PIDCOMM ] && [ $PIDCOMM == "sps" ]; then
-  kill $SPSPID
+# Check non-numeric value
+RE='^[0-9]+$'
+if ! [[ "$SPSPID" =~ $RE ]] ; then
+  echo Non-numeric PID "$SPSPID"
+  exit 1
 fi
+# Double check PID hasn't ended
+PIDCOMM=`ps -p "$SPSPID" -h -o comm`
+if [ -z "$PIDCOMM" ]; then
+  echo PID "$SPSPID" is no longer running
+  exit 1
+fi
+# Double check PID hasn't been reused for something else.
+if [ $PIDCOMM != "sps" ]; then
+  echo PID "$SPSPID" has been reused for "$PIDCOMM"
+  exit 1
+fi
+
+kill "$SPSPID"
 
 fix_output () {
   OUT="${JID}-${1}.tsv"
   BAK="${OUT}.bak"
   # If we got killed in the middle of a rewrite, there may be a backup file
-  if [ -f $BAK ]; then
+  if [ -f "$BAK" ]; then
     # There might also be a normal file. If so, it's corrupt.
-    if [ -f $OUT ]; then
-      rm -f $OUT 
+    if [ -f "$OUT" ]; then
+      rm -f "$OUT" 
     fi
     # Either way there isn't now, so restore the backup.
-    mv $BAK $OUT 
+    mv "$BAK" "$OUT" 
   fi
 
   # If it all went horribly wrong, there may be no output either
-  if [ ! -f $OUT ]; then
-    echo "No output $OUT found."
+  if [ ! -f "$OUT" ]; then
+    echo "No output "$OUT" found"
     return 1
   fi
-
-  # If we got killed in the middle of an append, the last line may be corrupt.
-  # There's no simple way to know if this happens as it could be in the last
-  # number on the line, so the simplest thing is just to throw away the very
-  # last line.
-  sed -i '$d' $OUT
 }
 
 fix_output "cpu" &

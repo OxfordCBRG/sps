@@ -10,7 +10,7 @@ do_ascii_plot () {
     Y=`echo ${X}-1 | bc`
     COMM+="\"$1\" using $X title \"""${array[$Y]}""\" with lines,"
   done
-  echo ${COMM:0:-1} | gnuplot
+  echo ${COMM:0:-1} | gnuplot | tr '[:cntrl:]' '\n' &> "$FILE".ascii 
 }
 
 do_png_plot () {
@@ -24,38 +24,24 @@ do_png_plot () {
   echo ${COMM:0:-1} | gnuplot
 }
 
-if [ $1 == "--ascii" ]; then
-  for FILE in $@; do
-    if [ -f "$FILE" ]; then
-      if [[ "$FILE" =~ "cpu.tsv" ]]; then
-        do_ascii_plot "$FILE" "CPU (cores)" &> "$FILE".ascii &
-      elif [[ "$FILE" =~ "mem.tsv" ]]; then
-        do_ascii_plot "$FILE" "Memory (kilobytes)" &> "$FILE".ascii &
-      elif [[ "$FILE" =~ "read.tsv" ]]; then
-        do_ascii_plot "$FILE" "Data read (bytes)" &> "$FILE".ascii &
-      elif [[ "$FILE" =~ "write.tsv" ]]; then
-        do_ascii_plot "$FILE" "Data written (bytes)" &> "$FILE".ascii &
-      else
-        do_ascii_plot "$FILE" "" &> "$FILE".ascii &
-      fi
+for FILE in $@; do
+  if [ -f "$FILE" ]; then
+    if [[ "$FILE" =~ "cpu.tsv" ]]; then
+      do_ascii_plot "$FILE" "CPU (cores)" &
+      do_png_plot "$FILE" "CPU (cores)" &
+    elif [[ "$FILE" =~ "mem.tsv" ]]; then
+      do_ascii_plot "$FILE" "Memory (kilobytes)" &
+      do_png_plot "$FILE" "Memory (kilobytes)" &
+    elif [[ "$FILE" =~ "read.tsv" ]]; then
+      do_ascii_plot "$FILE" "Data read (bytes)" &
+      do_png_plot "$FILE" "Data read (bytes)" &
+    elif [[ "$FILE" =~ "write.tsv" ]]; then
+      do_ascii_plot "$FILE" "Data written (bytes)" &
+      do_png_plot "$FILE" "Data written (bytes)" &
+    else
+      echo Unknown input "$FILE"
     fi
-  done
-elif [ $1 == "--png" ]; then
-  for FILE in $@; do
-    if [ -f "$FILE" ]; then
-      if [[ "$FILE" =~ "cpu.tsv" ]]; then
-        do_png_plot "$FILE" "CPU (cores)" &
-      elif [[ "$FILE" =~ "mem.tsv" ]]; then
-        do_png_plot "$FILE" "Memory (kilobytes)" &
-      elif [[ "$FILE" =~ "read.tsv" ]]; then
-        do_png_plot "$FILE" "Data read (bytes)" &
-      elif [[ "$FILE" =~ "write.tsv" ]]; then
-        do_png_plot "$FILE" "Data written (bytes)" &
-      else
-        do_png_plot "$FILE" ""
-      fi
-    fi
-  done
-fi
+  fi
+done
 
 wait # For background processes
