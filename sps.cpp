@@ -17,7 +17,7 @@
 
 using namespace std;
 
-struct jobstats { ofstream log; bool full_logging;
+struct jobstats { ofstream log; bool full_logging; string outputdir;
                   string cpus; string id; string arrayjob; string arraytask;
                   string cgroup; string mem; string read; string write;
                   string filestem; string cpufile; string memfile;
@@ -39,6 +39,7 @@ inline const string get_env_var(const char * c)
 const unsigned long long get_uptime(void);
 const vector<string> split_on_space(const string&);
 const string file_to_string(const string&);
+void rotate_output(string&);
 void init_logging(int, char**, jobstats&);
 void init_data(struct jobstats&);
 void log_startup(struct jobstats&);
@@ -83,6 +84,19 @@ int main(int argc, char *argv[])
     }
 } 
 
+void rotate_output(string &s)
+{
+    for (int i = 1; i < 10; i++)
+    {
+        if (!filesystem::exists(s + "." + to_string(i)))
+        {
+            filesystem::rename(s, s + "." + to_string(i));
+            return;
+        }
+    }
+    throw runtime_error("Exceed maximum rotate_output\n");
+}
+
 void init_logging(int argc, char *argv[], jobstats &job)
 {
     // We need a log file (a daemon can't output to STDOUT). To do that, we
@@ -103,7 +117,8 @@ void init_logging(int argc, char *argv[], jobstats &job)
         // job ID.
         if (job.arrayjob != "0")
             job.id = job.arrayjob + "_" + job.arraytask;
-        job.filestem = "sps-" + job.id;
+        job.outputdir = "sps-" + job.id;
+        job.filestem = job.outputdir + "/" + job.outputdir;
         job.samplerate = 5;
         job.full_logging = false;
     }
@@ -118,13 +133,15 @@ void init_logging(int argc, char *argv[], jobstats &job)
         job.arraytask = get_env_var("SLURM_ARRAY_TASK_ID");
         if (job.arrayjob != "0" && job.arrayjob != "")
             job.id = job.arrayjob + "_" + job.arraytask;
-        job.filestem = "sps-" + job.id;
+        job.outputdir = "sps-" + job.id;
+        job.filestem = job.outputdir + "/" + job.outputdir;
         // But, if we're not in a job we want to be able to log to a file anyway.
         if (job.id == "")
         {
             job.id = "-";
             job.cpus = "1";
-            job.filestem = "sps";
+            job.outputdir = "sps-local";
+            job.filestem = job.outputdir + "/" + job.outputdir;
         }
         // And then set the sample rate and logging depending on whether or
         // not we were passed an option
@@ -139,6 +156,11 @@ void init_logging(int argc, char *argv[], jobstats &job)
             job.full_logging = false;
         }
     }
+    // Now check whether the job output directory exists already. If it does,
+    // rotate it out of the way (maximum 9 times).
+    if (filesystem::exists(job.outputdir))
+        rotate_output(job.outputdir);
+    filesystem::create_directory(job.outputdir);
     // Ready. Start logging if we need to.
     job.log.open(job.filestem + ".log");
     if (!job.log.is_open())

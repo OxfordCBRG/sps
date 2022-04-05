@@ -1,0 +1,43 @@
+#!/bin/bash
+
+if [ $# -ne 1 ]; then
+  echo USAGE: cgroup-kill executable
+  exit 1
+fi
+
+EXE="$1"
+
+# SIGKILL all running instances of EXE which are in our own cgroup. Wait to
+# check processes terminate, but not for longer than 10 seconds.
+for x in `seq 1 51`; do
+
+  # Check for over time
+  if [ $x -eq 21 ]; then
+    echo Timed out waiting for "${EXE}" to stop
+    exit 1
+  fi
+
+  MYCGROUP=`ps h -p "$PPID" -o cgroup`
+  EXEPIDS=`ps h -u "$USER" -o comm,pid,cgroup \
+           | grep "$MYCGROUP" \
+           | grep -E "^${EXE} " \
+           | awk '{print $2}'`
+
+  # Check whether they're all gone yet
+  if [ -z "$EXEPIDS" ]; then
+    break
+  fi
+
+  for EXEPID in "$EXEPIDS"; do
+    # Check non-numeric value
+    RE='^[0-9]+$'
+    if ! [[ "$EXEPID" =~ $RE ]] ; then
+      echo Non-numeric PID "$EXEPID"
+      continue
+    fi
+    kill "$EXEPID"
+  done
+
+  sleep 0.2
+
+done

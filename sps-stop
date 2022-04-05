@@ -1,0 +1,48 @@
+#!/bin/bash
+
+# Terminate our process
+cgroup-kill sps || exit 1
+
+# For regular jobs, the Job ID is sufficient. However, for array jobs,
+# we need to reconstruct the special array job ID and set the Job ID
+# to that. If we're not in a job, use a default.
+JID=${SLURM_JOB_ID}
+AID=${SLURM_ARRAY_JOB_ID}
+TID=${SLURM_ARRAY_TASK_ID}
+if [ ! -z $AID ] && [ ! -z $TID ]; then
+  JID=`echo ${AID}_${TID}`
+fi
+
+# Now, need our SPS output directory and root filenames
+if [ ! -z $JID ]; then
+  SPSDIR=`echo sps-$JID`
+else
+  SPSDIR=`echo sps-local`
+fi
+SPSROOT=`echo ${SPSDIR}/${SPSDIR}`
+
+restore_backup () {
+  OUT="${SPSROOT}-${1}.tsv"
+  BAK="${OUT}.bak"
+  # If we got killed in the middle of a rewrite, there may be a backup file
+  if [ -f "$BAK" ]; then
+    # There might also be a normal file. If so, it's corrupt.
+    if [ -f "$OUT" ]; then
+      rm -f "$OUT" 
+    fi
+    # Either way there isn't now, so restore the backup.
+    mv "$BAK" "$OUT" 
+  fi
+}
+
+restore_backup "cpu" &
+restore_backup "mem" &
+restore_backup "read" &
+restore_backup "write" &
+
+wait # For background tasks
+
+if [ -d ${SPSDIR} ]; then
+  sps-sum ${SPSROOT}*tsv
+  sps-plot ${SPSROOT}*tsv ${SPSROOT}*sum
+fi

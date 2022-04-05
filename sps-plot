@@ -10,7 +10,7 @@ do_ascii_plot () {
     Y=`echo ${X}-1 | bc`
     COMM+="\"$1\" using $X title \"""${array[$Y]}""\" with lines,"
   done
-  echo ${COMM:0:-1} | gnuplot | tr '[:cntrl:]' '\n' &> "$FILE".ascii 
+  echo ${COMM:0:-1} | gnuplot 2>/dev/null | tr '[:cntrl:]' '\n' &> "$FILE".ascii
 }
 
 do_png_plot () {
@@ -21,7 +21,7 @@ do_png_plot () {
     Y=`echo ${X}-1 | bc`
     COMM+="\"$1\" using $X title \"""${array[$Y]}""\" with lines,"
   done
-  echo ${COMM:0:-1} | gnuplot
+  echo ${COMM:0:-1} | gnuplot &>/dev/null
 }
 
 for FILE in $@; do
