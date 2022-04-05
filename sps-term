@@ -1,0 +1,61 @@
+#!/bin/bash
+
+# For regular jobs, the Job ID is sufficient. However, for array jobs,
+# we need to reconstruct the special array job ID and set the Job ID
+# to that. If we're not in a job, use a default.
+JID=${SLURM_JOB_ID}
+AID=${SLURM_ARRAY_JOB_ID}
+TID=${SLURM_ARRAY_TASK_ID}
+if [ ! -z $AID ] && [ ! -z $TID ]; then
+  JID=`echo sps-${AID}_${TID}`
+elif [ ! -z $JID ]; then
+  JID=`echo sps-$JID`
+else
+  JID=`echo sps`
+fi
+
+CPUOUT="${JID}-cpu.tsv"
+CPUTMP="${JID}-cpu.tsv.bak"
+MEMOUT="${JID}-mem.tsv"
+MEMTMP="${JID}-mem.tsv.bak"
+SPSLOG="${JID}.log"
+
+# We can now kill SPS by PID
+SPSPID=`grep SPS_PROCESS $SPSLOG | awk '{print $2}'`
+if [ -z $SPSPID ]; then
+  # SPS broke. Bail out.
+  echo No SPS proccess ID found. Something went wrong.
+  exit 1
+fi
+# Double check that this PID hasn't been reused for something else. Then
+# kill it.
+PIDCOMM=`ps -p $SPSPID -h -o comm`
+if [ ! -z $PIDCOMM ] && [ $PIDCOMM == "sps" ]; then
+  kill $SPSPID
+fi
+
+# If we got killed in the middle of a rewrite, there may be a backup file
+if [ -f $CPUTMP ]; then
+  # There might also be a normal file. If so, it's corrupt.
+  if [ -f $CPUOUT]; then
+    rm -f $CPUOUT
+  fi
+  # Either way there isn't now, so restore the backup.
+  mv $CPUTMP $CPUOUT
+fi
+# Ditto for memory
+if [ -f $MEMTMP ]; then
+  if [ -f $MEMOUT]; then
+    rm -f $MEMOUT
+  fi
+  mv $MEMTMP $MEMOUT
+fi
+
+# If we got killed in the middle of an append, the last line may be corrupt.
+# There's no simple way to know if this happens as it could be in the last
+# number on the line, so the simplest thing is just to throw away the very
+# last line.
+sed -i '$d' $CPUOUT
+sed -i '$d' $MEMOUT
+
+# We're done.

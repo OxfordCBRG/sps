@@ -1,0 +1,28 @@
+#!/bin/bash
+if [ $# -lt 1 ]; then
+  echo No file specified
+  exit 1
+fi
+
+module load gnuplot
+
+do_plot () {
+  COMM="set terminal png size 1200,800 enhanced font 'Helvetica,16'; set output '${FILE}.png'; set title 'SPS Data Plot'; set title font 'Helvetica,20'; set xlabel 'Job profiling step'; set ylabel '$2'; set key outside; set key right top; plot "
+  read -r -a array <<< `head -1 $1`
+  N="${#array[@]}"
+  for X in `seq 2 $N`; do
+    Y=`echo ${X}-1 | bc`
+    COMM+="\"$1\" using $X title \"""${array[$Y]}""\" with lines,"
+  done
+  echo ${COMM:0:-1} | gnuplot
+}
+
+for FILE in $@; do
+  if [[ "$FILE" =~ "cpu.tsv" ]]; then
+    do_plot "$FILE" "CPU (cores)"
+  elif [[ "$FILE" =~ "mem.tsv" ]]; then
+    do_plot "$FILE" "Memory (kilobytes)"
+  else
+    do_plot "$FILE" ""
+  fi
+done
