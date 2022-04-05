@@ -104,8 +104,7 @@ void init_logging(int argc, char *argv[], jobstats &job)
     // Slurm spank plugin, the environment variables haven't been set yet
     // so we have to use the values we've been passed by it instead.
     // These are passed as JOBID REQUESTED_CPUS ARRAY_ID ARRAY_TASK.
-    // N.B. argv[0] is the executable name. Also, set the sample rate to the
-    // default 5 seconds and turn off full logging.
+    // N.B. argv[0] is the executable name.
     if (argc == 5)
     {
         job.id = string(argv[1]);
@@ -118,49 +117,39 @@ void init_logging(int argc, char *argv[], jobstats &job)
         if (job.arrayjob != "0")
             job.id = job.arrayjob + "_" + job.arraytask;
         job.outputdir = "sps-" + job.id;
-        job.filestem = job.outputdir + "/" + job.outputdir;
-        job.samplerate = 5;
-        job.full_logging = false;
     }
-    // Alternatively, we might be being run manually so that non-default
-    // options can be set. In that case, we have to get the necessary from the
-    // environment variables if we're in a job, or use defaults if we're not.
+    // Alternatively, we might be being run manually. Use defaults.
     else
     {
-        job.id = get_env_var("SLURM_JOB_ID");
-        job.cpus = get_env_var("SLURM_CPUS_ON_NODE");
-        job.arrayjob = get_env_var("SLURM_ARRAY_JOB_ID");
-        job.arraytask = get_env_var("SLURM_ARRAY_TASK_ID");
-        if (job.arrayjob != "0" && job.arrayjob != "")
-            job.id = job.arrayjob + "_" + job.arraytask;
-        job.outputdir = "sps-" + job.id;
-        job.filestem = job.outputdir + "/" + job.outputdir;
-        // But, if we're not in a job we want to be able to log to a file anyway.
-        if (job.id == "")
+        job.id = "-";
+        job.cpus = "1";
+        job.outputdir = "sps-local";
+    }
+    // Check for override file and set sample rate and full logging
+    // accordingly.
+    if (filesystem::exists(".spsfull"))
+    {
+        job.full_logging = true;
+        job.samplerate = 5;
+        string s = file_to_string(".spsfull");
+        if ( s != "" && all_of(s.begin(), s.end(), ::isdigit))
         {
-            job.id = "-";
-            job.cpus = "1";
-            job.outputdir = "sps-local";
-            job.filestem = job.outputdir + "/" + job.outputdir;
+            int i = stoi(s);
+            if (i > 0 && i < 60)
+                job.samplerate = stoi(s);
         }
-        // And then set the sample rate and logging depending on whether or
-        // not we were passed an option
-        if (argc == 2)
-        {
-            job.samplerate = stoi(string(argv[1]));
-            job.full_logging = true;
-        }
-        else
-        {
-            job.samplerate = 5;
-            job.full_logging = false;
-        }
+    }
+    else
+    {
+        job.full_logging = false;
+        job.samplerate = 5;
     }
     // Now check whether the job output directory exists already. If it does,
     // rotate it out of the way (maximum 9 times).
     if (filesystem::exists(job.outputdir))
         rotate_output(job.outputdir);
     filesystem::create_directory(job.outputdir);
+    job.filestem = job.outputdir + "/" + job.outputdir;
     // Ready. Start logging if we need to.
     job.log.open(job.filestem + ".log");
     if (!job.log.is_open())
