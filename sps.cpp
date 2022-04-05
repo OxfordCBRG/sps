@@ -23,7 +23,7 @@ struct jobstats { ofstream log; bool full_logging; string outputdir;
                   string filestem; string cpufile; string memfile;
                   string readfile; string writefile;
                   time_t start; unsigned long long tick; bool rewrite;
-                  unsigned int samplerate;
+                  unsigned int samplerate; int max_procs; int nprocs;
 		  map<string, string> pidcomm;
 		  map<string, string> pidthreads;
                   map<string, vector<string>> pidfiles;
@@ -73,6 +73,8 @@ int main(int argc, char *argv[])
         for (job.tick = 1; ; job.tick++)
         {
             get_data(job);
+            if (job.nprocs > job.max_procs)
+                throw runtime_error("FATAL ERROR: SPS_MAX_PROCS exceeded\n");
             write_output(job);
             sleep(job.samplerate);
         }
@@ -146,6 +148,7 @@ void init_rc(struct jobstats &job)
     // Check for rc file and set sample rate and full logging accordingly.
     job.full_logging = false;
     job.samplerate = 5;
+    job.max_procs = 32;
     if (filesystem::exists("spsrc"))
     {
         // File layout is "OPTION VALUE" pairs, one pair per line.
@@ -168,6 +171,7 @@ void init_rc(struct jobstats &job)
                 if (val == "true")
                     job.full_logging = true;
             }
+            // Sample rate can't meaningfully be less than 1s or more than 60s
             else if (opt == "SPS_SAMPLE_RATE")
             {
                 if ( val != "" && all_of(val.begin(), val.end(), ::isdigit))
@@ -175,6 +179,17 @@ void init_rc(struct jobstats &job)
                     int i = stoi(val);
                     if (i > 0 && i <= 60)
                         job.samplerate = i;
+                }
+            }
+            // Every job has at leat 4 processes. More than 128 will man SPS
+            // will easily grow to over 1G memory for moderately long jobs.
+            else if (opt == "SPS_MAX_PROCS")
+            {
+                if ( val != "" && all_of(val.begin(), val.end(), ::isdigit))
+                {
+                    int i = stoi(val);
+                    if (i > 3 && i <= 128)
+                        job.max_procs = i;
                 }
             }
         }
@@ -215,6 +230,7 @@ void log_startup(struct jobstats &job)
     job.log << "READ_OUT_FILE\t\t" << job.readfile << endl;
     job.log << "WRITE_OUT_FILE\t\t" << job.writefile << endl;
     job.log << "SPS_PROCESS\t\t" << to_string(getpid()) << endl;
+    job.log << "SPS_MAX_PROCS\t\t" << job.max_procs << endl;
     job.log << "SPS_SAMPLE_RATE\t\t" << job.samplerate
             << "s (faster events may not be detected)\n";
     if (job.full_logging)
@@ -348,6 +364,8 @@ void get_data(struct jobstats &job)
             data.push_back("0"); 
     // Now, we know for sure that every PID that's ever run has exactly the
     // same number of data points, which is the same as our current "tick".
+    // Lastly, upate our record of how many processes we're tracking.
+    job.nprocs = job.pidcomm.size();
 }
 
 void log_open_files(jobstats &job, const string &pid)
