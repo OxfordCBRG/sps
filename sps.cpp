@@ -17,7 +17,8 @@
 
 using namespace std;
 
-struct jobstats { ofstream log; bool full_logging; string outputdir;
+struct jobstats { ofstream log; bool full_logging; bool auto_resources;
+                  string outputdir;
                   string cpus; string id; string arrayjob; string arraytask;
                   string cgroup; string mem; string read; string write;
                   string filestem; string cpufile; string memfile;
@@ -74,7 +75,19 @@ int main(int argc, char *argv[])
         {
             get_data(job);
             if (job.nprocs > job.max_procs)
-                throw runtime_error("FATAL ERROR: SPS_MAX_PROCS exceeded\n");
+            {
+                if (job.auto_resources)
+                {
+                    job.samplerate *= 2;
+                    job.max_procs *= 2;
+                    job.log << "SPS_AUTO_RESOURCES: Increasing SPS_MAX_PROCS to "
+                            << job.max_procs << " and reducing "
+                            << "SPS_SAMPLE_RATE to " << job.samplerate << "\n";
+                    job.log.flush();
+                }
+                else
+                    throw runtime_error("FATAL ERROR: SPS_MAX_PROCS exceeded\n");
+            }
             write_output(job);
             sleep(job.samplerate);
         }
@@ -145,10 +158,16 @@ void init_logging(int argc, char *argv[], jobstats &job)
 
 void init_rc(struct jobstats &job)
 {
-    // Check for rc file and set sample rate and full logging accordingly.
+    // By default, use auto resources. This sets the sample rate to 1s and
+    // the max_procs to 4. Every time the max_procs is exceeded, both it and
+    // the sample rate are doubled. This does mean that the X-axis is non-
+    // linear, but also allows a reasonable attempt at profiling the job even
+    // for jobs which spawn quite a lot of processes.
+    job.auto_resources = true;
+    job.samplerate = 1;
+    job.max_procs = 4;
     job.full_logging = false;
-    job.samplerate = 5;
-    job.max_procs = 32;
+    // Check for rc file and set sample rate and full logging accordingly.
     if (filesystem::exists("spsrc"))
     {
         // File layout is "OPTION VALUE" pairs, one pair per line.
@@ -178,18 +197,25 @@ void init_rc(struct jobstats &job)
                 {
                     int i = stoi(val);
                     if (i > 0 && i <= 60)
+                    {
                         job.samplerate = i;
+                        job.auto_resources = false;
+                    }
                 }
             }
             // Every job has at leat 4 processes. More than 128 will man SPS
             // will easily grow to over 1G memory for moderately long jobs.
+            // If someone asks we could increase this, but doubtful.
             else if (opt == "SPS_MAX_PROCS")
             {
                 if ( val != "" && all_of(val.begin(), val.end(), ::isdigit))
                 {
                     int i = stoi(val);
                     if (i > 3 && i <= 128)
+                    {
                         job.max_procs = i;
+                        job.auto_resources = false;
+                    }
                 }
             }
         }
@@ -233,6 +259,8 @@ void log_startup(struct jobstats &job)
     job.log << "SPS_MAX_PROCS\t\t" << job.max_procs << endl;
     job.log << "SPS_SAMPLE_RATE\t\t" << job.samplerate
             << "s (faster events may not be detected)\n";
+    if (job.auto_resources)
+        job.log << "SPS_AUTO_RESOURCES\ttrue\n";
     if (job.full_logging)
         job.log << "SPS_FULL_LOGGING\ttrue\n";
     job.log << "Starting profiling...\n";
