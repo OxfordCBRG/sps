@@ -79,11 +79,10 @@ int main(int argc, char *argv[])
             // First, collect data.
             get_data(job);
             // Next, make sure we don't consume all memory by utilising
-            // RRD-like auto data resizing. We pick 1024 as our maximum
-            // because our PNG plot has no more than that many points, so
-            // extra data is wasteful. This caused the all data to get halved
-            // when it gets too big, and doubles the sample rate.
-            if ((job.tick % 1024) == 0 && (!job.unlimited_data))
+            // RRD-like auto data resizing. We pick 4096 as our maximum
+            // because it works out quite nicely empirically. After that,
+            // half the data and double the sample rate.
+            if ((job.tick % 4096) == 0 && (!job.unlimited_data))
             {
                 shrink_data(job);
                 job.log << "SPS_AUTO_RESOURCES: Compacted data and reduced "
