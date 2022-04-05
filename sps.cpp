@@ -1,5 +1,6 @@
 #include <sys/sysinfo.h>
 #include <sys/types.h>
+#include <limits.h>
 #include <unistd.h>
 #include <algorithm>
 #include <chrono>
@@ -17,27 +18,29 @@
 using namespace std;
 
 struct jobstats { ofstream log;
-                  string cpus; string id; string arrayjob;
-                  string arraytask; string cgroup; string mem;
+                  string cpus; string id; string arrayjob; string arraytask;
+                  string cgroup; string mem; string read; string write;
                   string filestem; string cpufile; string memfile;
-                  string read; string write;
                   string readfile; string writefile;
                   time_t start; unsigned long long tick; bool rewrite;
                   unsigned int samplerate;
-                  map<string, string> pidcomm;
+		  map<string, string> pidcomm;
+		  map<string, string> pidthreads;
+                  map<string, vector<string>> pidfiles;
                   map<string, vector<string>> pidcpu;
                   map<string, vector<string>> pidmem;
                   map<string, vector<string>> pidread;
                   map<string, vector<string>> pidwrite; };
 
 inline const string get_env_var(const char * c)
-    { const char *p = getenv(c); return(string(p ? p : "0")); }
+    { const char *p = getenv(c); return(string(p ? p : "")); }
 const unsigned long long get_uptime(void);
-const vector<string> split_on_newline(const string&);
+const vector<string> split_on_space(const string&);
 const string file_to_string(const string&);
-void init_logging(struct jobstats&);
 void init_data(struct jobstats&);
 void get_data(struct jobstats&);
+void log_open_files(jobstats&, const string&);
+void log_threads(jobstats&, const string&, const string&);
 void write_output(struct jobstats&);
 void backup_output(struct jobstats&);
 void delete_backup(struct jobstats&);
@@ -49,15 +52,56 @@ void append_tab(string&, map<string, vector<string>>&, string&,
 int main(int argc, char *argv[])
 {
     struct jobstats job;
-    init_logging(job);     // As a deamon we can't log to STDOUT
+
+    // Get sample rate. "0" means don't run. If not set, use 1, else use
+    // whatever we got as an int.
+    string samplerate = get_env_var("SPS_SAMPLE_RATE");
+    if (samplerate == "0")
+        exit(1);
+    else if (samplerate == "")
+        job.samplerate = 1;
+    else
+        job.samplerate = stoi(samplerate);
+
+    // Get some key variables. This is a pain. If we're being run by the
+    // Slurm spank plugin, the environment variables haven't been set yet
+    // so we have to use the values we've been passed by it instead.
+    // These are passed as JOBID REQUESTED_CPUS ARRAY_ID ARRAY_TASK.
+    // N.B. argv[0] is the executable name.
+    if (argc == 5)
+    {
+        job.id = string(argv[1]);
+        job.cpus = string(argv[2]);
+        job.arrayjob = string(argv[3]);
+        job.arraytask = string(argv[4]);
+        if (job.arrayjob != "0")
+            job.id = job.arrayjob + "_" + job.arraytask;
+        job.filestem = "sps-" + job.id;
+    }
+    // If we're not in a job, we want to be able to log to a file anyway,
+    // so we initialise defaults.
+    else
+    {
+        job.id = "-";
+        job.cpus = "1";
+        job.filestem = "sps";
+    }
+    // Ready
+    job.log.open(job.filestem + ".log");
+    if (!job.log.is_open())
+        exit(1);
+    // Don't care about I/O compatibility with C. Let's go fast.
+    ios_base::sync_with_stdio(false);
+
     try {                  // Now we can log the exceptions
+
         init_data(job);
+
         job.log << "CBB Profiling started ";
         job.log << string(ctime(&job.start));
         job.log << "SLURM_JOB_ID\t" << job.id << endl;
         job.log << "REQ_CPU_CORES\t" << job.cpus << endl;
         job.log << "REQ_MEMORY_KB\t" << job.mem << endl;
-        job.log << "SAMPLE_RATE\t" << job.samplerate << endl;
         job.log << "CPU_OUT_FILE\t" << job.cpufile << endl;
         job.log << "MEM_OUT_FILE\t" << job.memfile << endl;
         job.log << "READ_OUT_FILE\t" << job.readfile << endl;
@@ -66,6 +110,8 @@ int main(int argc, char *argv[])
         if (daemon(1,0) == -1)
             throw runtime_error("Failed to daemonise\n");
         job.log << "SPS_PROCESS\t" << to_string(getpid()) << endl;
+        job.log << "SPS_SAMPLE_RATE\t" << job.samplerate
+                << "s (faster events may not be detected)\n";
         job.log << "Starting profiling...\n";
         job.log.flush();
         // Invariant: job.tick = current iteration collecting and writing data
@@ -79,35 +125,15 @@ int main(int argc, char *argv[])
     }
     catch (const exception &e)
     {
-        job.log << e.what();
+        job.log << e.what() << endl;
         job.log.flush();
         exit(1);
     }
 } 
 
-void init_logging(struct jobstats &job)
-{
-    // Get some key variables
-    job.id = get_env_var("SLURM_JOB_ID");
-    job.arrayjob = get_env_var("SLURM_ARRAY_JOB_ID");
-    job.arraytask = get_env_var("SLURM_ARRAY_TASK_ID");
-    // Reconstruct job.id if we're in an array
-    if (job.arrayjob != "0")
-        job.id = job.arrayjob + "_" + job.arraytask;
-    // Use a default name stem if we didn't get a job ID
-    job.filestem = job.id == "0" ? "sps" : (string("sps-" + job.id));
-    // Ready
-    job.log.open(job.filestem + ".log");
-    if (!job.log.is_open())
-        exit(1);
-    // Don't care about I/O compatibility with C. Let's go fast.
-    ios_base::sync_with_stdio(false);
-}
-
 void init_data(struct jobstats &job)
 {
     job.start = chrono::system_clock::to_time_t(chrono::system_clock::now());
-    job.cpus = get_env_var("SLURM_CPUS_ON_NODE");
     job.mem = file_to_string("/sys/fs/cgroup/memory/slurm/uid_" +
                            to_string(getuid()) + "/job_" + job.id +
                            "/memory.soft_limit_in_bytes");
@@ -118,12 +144,9 @@ void init_data(struct jobstats &job)
         job.mem = to_string(stof(job.mem)/1024);
     // Everything is in a cgroup. If we're not in a job this is our login.
     job.cgroup = file_to_string("/proc/" + to_string(getpid()) + "/cgroup");
-    // Check for override of sample rate
-    job.samplerate = stoi(get_env_var("SPS_SAMPLE_RATE")); // Will be an int
-    job.samplerate = job.samplerate == 0 ? 1 : job.samplerate; 
     job.cpufile = job.filestem + "-cpu.tsv";
     job.memfile = job.filestem + "-mem.tsv";
-    // We need a value for "requested"
+    // We need values for "requested"
     job.read = "0";
     job.write = "0";
     job.readfile = job.filestem + "-read.tsv";
@@ -144,22 +167,31 @@ void get_data(struct jobstats &job)
         if (all_of(pid.begin(), pid.end(), ::isdigit) &&
            (cgroup == job.cgroup))
         {
+            const auto comm = file_to_string(pid_root + "/comm");
+            // SSHD and slurmstepd don't allow us to read the I/O stats,
+            // and breaks stuff
+            if (comm == "sshd" || comm == "slurmstepd")
+                continue;
             // /proc/PID/stat has lots of entries on a single line. We get
             // them as a vector "stats" and then access them later via at().
-            const auto stats = split_on_newline(file_to_string(pid_root + "/stat"));
+            const auto stats = split_on_space(file_to_string(pid_root + "/stat"));
             // The runtime of our pid is (system uptime) - (start time of PID)
             const unsigned long long runtime = get_uptime() - 
                                                stoull(stats.at(21)); 
             // Total CPU time is the sum of user time and system time
             const unsigned long long cputime = stoull(stats.at(13)) +
                                                stoull(stats.at(14));
+            const auto threads = stats.at(19);
             // CPU is the number of whole CPUs being used and is calculated
             // using total used CPU time / total runtime.
             // This is the same as in "ps", NOT the same as "top".
             const auto cpu = ((float)cputime) / runtime;
             // RSS is in pages. 1 page = 4096 bytes, or 4 kb.
             const auto mem = stol(stats.at(23)) * 4;
-            const auto iostats = split_on_newline(file_to_string(pid_root + "/io"));
+            // /prod/PID/io has entries in the format "name: value". We turn
+            // these into a vector on space (including newline) so we can
+            // access the values directly without further manipulation.
+            const auto iostats = split_on_space(file_to_string(pid_root + "/io"));
             const auto read = iostats.at(9);
             const auto write = iostats.at(11);
             // There a 3 scenarios for a PID:
@@ -168,7 +200,9 @@ void get_data(struct jobstats &job)
             //    need to create new entries in the data maps.
             if (job.pidcomm.find(pid) == job.pidcomm.end())
             {
-                job.pidcomm.emplace(pid, file_to_string(pid_root + "/comm"));
+                job.pidcomm.emplace(pid, comm);
+                job.log << job.tick << ":" << job.pidcomm.at(pid) << "-"
+                        << pid << " started\n";
                 job.pidcpu.emplace(pid, vector<string> {});
                 job.pidmem.emplace(pid, vector<string> {});
                 job.pidread.emplace(pid, vector<string> {});
@@ -177,14 +211,14 @@ void get_data(struct jobstats &job)
                 // that's already passed.
                 for (unsigned long long i = 1; i < job.tick; i++)
                 {
-                    job.pidcpu[pid].push_back("0.0");
+                    job.pidcpu[pid].push_back("0");
                     job.pidmem[pid].push_back("0");
                     job.pidread[pid].push_back("0");
                     job.pidwrite[pid].push_back("0");
                 }
                 // Now we're all initialised to add the new data, just like
                 // any other PID. Set job.rewrite to "true" so we know to
-                // rewrite our whole output later.
+                // rewrite our whole output later, adding a new column.
                 job.rewrite = true;
             }
             // 2. This is an existing PID (or a PID that we've just
@@ -193,6 +227,9 @@ void get_data(struct jobstats &job)
             job.pidmem[pid].push_back(to_string(mem));
             job.pidread[pid].push_back(read);
             job.pidwrite[pid].push_back(write);
+            // Log some interesting stuff
+            log_threads(job, pid, threads);
+            log_open_files(job, pid);
         }
     }
     // 3. We have a PID that used to exist but has now exited. That means
@@ -203,7 +240,7 @@ void get_data(struct jobstats &job)
     //    new blank data point onto the end.
     for (auto & [pid, data] : job.pidcpu)
         if (data.size() < job.tick)
-            data.push_back("0.0"); 
+            data.push_back("0"); 
     for (auto & [pid, data] : job.pidmem)
         if (data.size() < job.tick)
             data.push_back("0"); 
@@ -215,6 +252,57 @@ void get_data(struct jobstats &job)
             data.push_back("0"); 
     // Now, we know for sure that every PID that's ever run has exactly the
     // same number of data points, which is the same as our current "tick".
+}
+
+void log_open_files(jobstats &job,const string &pid)
+{
+    for (const auto & p : filesystem::directory_iterator("/proc/" + pid + "/fd/"))
+    {
+        // If this is the first time we've seen the files for this PID,
+        // initialise our data structure
+        if (job.pidfiles.find(pid) == job.pidfiles.end())
+            job.pidfiles.emplace(pid, vector<string> {});
+        // The file descriptors are all links to real files. Read this.
+        string link = string(p.path());
+        char buff[PATH_MAX];
+        ssize_t len = ::readlink(link.c_str(), buff, sizeof(buff)-1);
+        if (len == -1)
+            throw runtime_error("Path is too long\n");
+        buff[len] = '\0';
+        string file = string(buff);
+        // We only want to log the first time we see a file handle. We do this
+        // via exclusion.
+        bool newfile = true;
+        // There's a lot of open files in /proc and /dev. Ignore them.
+        if (file.find("/proc") != string::npos)
+            newfile = false;
+        if (file.find("/dev") != string::npos)
+            newfile = false;
+        for (const auto f : job.pidfiles[pid]) 
+            if (f == file)
+                newfile = false;
+        if (newfile)
+        {
+            // Add and log
+            job.pidfiles[pid].push_back(file);
+            job.log << job.tick << ":" << job.pidcomm[pid] << "-" << pid
+                    << " " << file << endl;
+            job.log.flush();
+        }
+    }
+}
+
+void log_threads(jobstats &job, const string &pid, const string &threads)
+{
+    if (job.pidthreads.find(pid) == job.pidthreads.end())
+        job.pidthreads.emplace(pid, string {});
+    if (threads != job.pidthreads.at(pid))
+    {
+        job.pidthreads.at(pid) = threads;
+        job.log << job.tick << ":" << job.pidcomm.at(pid) << "-" << pid
+                << " threads=" << threads << endl;
+        job.log.flush();
+    }
 }
 
 void backup_output(struct jobstats &job)
@@ -343,8 +431,10 @@ const string file_to_string(const string &path)
     return(contents.substr(0,contents.length()-1));
 }
  
-// Get a file as a vector of strings
-const vector<string> split_on_newline(const string &path)
+// Get a file as a vector of strings. Splits on any character in the [:space:]
+// character set, which includes all horizontal and vertical padding
+// including ' ', '\t' and '\n'.
+const vector<string> split_on_space(const string &path)
 {
     istringstream iss(path);
     const vector<string> results((istream_iterator<string>(iss)),
