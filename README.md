@@ -1,14 +1,22 @@
 # Overview
 
-The Slurm Profiling Service (sps) is a lightweight job profiler which bridges the gap between numerical job stats and full-blown application profiling.
+The Slurm Profiling Service `sps` is a lightweight job profiler which bridges the gap between numerical job stats and full-blown application profiling.
+
+`sps` is stared by Slurm *as the user*, deamonises, and runs until killed. It records CPU, memory & disk reads/writes per binary in an RRD-like memory structure, and writes them out into text logs. After the job finishes, clean up scripts visualise the data into both ASCII and PNG plots, then writes the ASCII charts to the Slurm job log and compresses everything into a tarball.
+
+# Requirements
+
+`sps` only works with Slurm, and Slurm must be set up so that all jobs run inside their own `cgroup`. The `cgroup` is used by `sps` to determine which processes are part of the job.
+
+Compiling the code requires a C compiler, a C++ compiler with c++-17 support and the Slurm development kit.
 
 # Files
 
 - *README.md*: this document
 - *Makefile*: `make all` to build `sps` and the spank plugin
-- *ccbspank.c*: source code for the spank plugin; requires a C compiler and that the Slurm development kit is installed
+- *ccbspank.c*: source code for the spank plugin
 - *ccbspank.sh*: called by the spank plugin; allows easy modification without recompiling the plugin
-- *sps.cpp*: source code for `sps`; requires a C++ compiler with c++-17 support
+- *sps.cpp*: source code for `sps`
 - *taskepilog.sh*: needs to be called by the Slurm cleanup scripts; calls `sps-stop` and then creates the results tarball
 - *sps-stop*: calls `cgroup-kill`, `sps-sum` and `sps-plot`, in that order, to create the output files
 - *cgroup-kill*: kills a running instance of `sps` in the same cgroup
