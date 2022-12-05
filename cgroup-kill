@@ -12,7 +12,7 @@ EXE="$1"
 for x in `seq 1 51`; do
 
   # Check for over time
-  if [ $x -eq 21 ]; then
+  if [ $x -eq 51 ]; then
     echo Timed out waiting for "${EXE}" to stop
     exit 1
   fi

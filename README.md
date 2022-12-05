@@ -1,7 +1,16 @@
-The Slurm Profiling Service
+# Overview
 
-Estimating the resources you think that a job will need is difficult. The more resources you ask for the lower in the queue you’ll end up, but if you ask for too little memory or time, your job will die before it finishes. Thus, it’s important to get it right.
+The Slurm Profiling Service (sps) is a lightweight job profiler which bridges the gap between numerical job stats and full-blown application profiling.
 
-The solution to this problem is job profiling. Job profiling is a where a small helper program tracks how much CPU and memory your job uses and provides you with statistics. Using these, you can submit a single job with your best guesses, look at the output, and then have a reasonable idea of what to use for subsequent jobs of a similar type. Once you get the used to it, profiling can also be used to monitor, optimise and debug your jobs by additionally providing information on disk usage, threads and open files.
+# Files
 
-See https://datashare.molbiol.ox.ac.uk/public/man/man7/profiling.7.html for documentation on how this is used in the CCB cluster.
+- README.md: this document
+- Makefile: "make all" to build sps and the spank plugin
+- ccbspank.c: source code for the spank plugin; requires a C compiler and that the Slurm development kit is installed
+- ccbspank.sh: called by the spank plugin; allows easy modification without recompiling the plugin
+- sps.cpp: source code for sps; requires a C++ compiler with c++-17 support
+- taskepilog.sh: needs to be called by the Slurm cleanup scripts; calls sps-stop and then creates the results tarball
+- sps-stop: calls cgroup-kill, sps-sum and sps-plot, in that order, to create the output files
+- cgroup-kill: kills a running instance of sps in the same cgroup
+- sps-sum: creates overview output which sum the data across all processes
+- sps-plot: calls gnuplot to create the ascii and png charts
