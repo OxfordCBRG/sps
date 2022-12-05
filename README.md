@@ -26,7 +26,7 @@ Compiling the code requires a C compiler, a C++ compiler with c++-17 support and
 On the CCB systems, the files are installed as follows:
 
 ```
-/project/sps/current/
+/package/sps/current/
                      sps
                      cgroup-kill
                      sps-stop
