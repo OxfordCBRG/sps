@@ -31,6 +31,8 @@ On the CCB systems, the files are installed as follows:
                      ccpspank.so
 ```
 
+Several of these are hard coded paths that will need to be updated for local use. This could be improved in future versions.
+
 # Running locally
 
 When testing the code to check that it works, note that you can run it directly in any login session and then kill it as normal using `sps-stop`. The output will be written to a folder called `sps-local`.
