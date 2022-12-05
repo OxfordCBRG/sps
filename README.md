@@ -17,17 +17,19 @@ The Slurm Profiling Service (sps) is a lightweight job profiler which bridges th
 
 On the CCB systems, the files are installed as follows:
 
-```/project/sps/current/`
-                      sps
-                      cgroup-kill
-                      sps-stop
-                      sps-sum
-                      sps-plot
+```
+/project/sps/current/
+                     sps
+                     cgroup-kill
+                     sps-stop
+                     sps-sum
+                     sps-plot
 /etc/slurm/
-                      ccbspank.sh
-                      taskepilog.sh
+                     ccbspank.sh
+                     taskepilog.sh
 /usr/lib64/slurm
-                      ccpspank.so```
+                     ccpspank.so
+```
 
 # Running locally
 
