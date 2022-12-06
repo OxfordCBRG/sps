@@ -6,9 +6,10 @@ The Slurm Profiling Service `sps` is a lightweight job profiler which bridges th
 
 # Requirements
 
-`sps` only works with Slurm, and Slurm must be set up so that all jobs run inside their own `cgroup`. The `cgroup` is used by `sps` to determine which processes are part of the job.
-
-Compiling the code requires a C compiler, a C++ compiler with c++-17 support and the Slurm development kit. A trivially simple GNU Makefile is provided, if desired.
+- `sps` only works with Slurm
+- Slurm must be configured so that all jobs run inside their own `cgroup`; this is used by `sps` internally to determine which processes are part of the job
+- Compiling the code requires a C compiler, a C++ compiler with c++-17 support and the Slurm development kit (a trivially simple GNU Makefile is provided)
+- The output ASCII and PNG charts require that Gnuplot is installed on all compute nodes
 
 # Files
 
