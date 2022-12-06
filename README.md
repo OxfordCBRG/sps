@@ -55,6 +55,8 @@ sps
 sps-stop
 ``` 
 
+Passing the necessary command line parameters via job environment variables would be a relatively trivial addition, and avoid every job output going into a folder called `sps-local`.
+
 # Notes on the design
 
 `sps` has been designed to perform with minimal overhead under all conceivable conditions, but also to be relatively easy to understand and maintain. This leads to many deliberate compromises:
