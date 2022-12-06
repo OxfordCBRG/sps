@@ -47,7 +47,7 @@ The files must be available on all compute nodes and the Slurm master. Several o
 When interactively testing the code to check that it works, note that you can launch it directly and then kill it as normal using `sps-stop`. The output will be written to a folder called `sps-local`. A similar approach could also be used to have on-demand rather than automatic profiling; simply ignore the SPANK plugin and epilogue script, and add the calls directly to the job script:
 
 ```
-!#/bin/bash
+#!/bin/bash
 sps
 
 [Job commands here]
