@@ -14,10 +14,10 @@ Compiling the code requires a C compiler, a C++ compiler with c++-17 support and
 
 - *README.md*: this document
 - *Makefile*: `make all` to build `sps` and the spank plugin
-- *ccbspank.c*: source code for the spank plugin
+- *ccbspank.c*: source code for the spank plugin; set `optional /usr/lib64/slurm/ccbspank.so` in `plugstack.conf` to ensure it is called at job launch
 - *ccbspank.sh*: called by the spank plugin; allows easy modification without recompiling the plugin
 - *sps.cpp*: source code for `sps`
-- *taskepilog.sh*: needs to be called by the Slurm cleanup scripts; calls `sps-stop` and then creates the results tarball
+- *taskepilog.sh*: needs to be set to run under `TaskEpilog` in `slurm.conf`; calls `sps-stop` and then creates the results tarball
 - *sps-stop*: calls `cgroup-kill`, `sps-sum` and `sps-plot`, in that order, to create the output files
 - *cgroup-kill*: kills a running instance of `sps` in the same cgroup
 - *sps-sum*: creates overview output which sum the data across all processes
