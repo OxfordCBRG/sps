@@ -2,7 +2,7 @@
 
 The Slurm Profiling Service `sps` is a lightweight job profiler which bridges the gap between numerical job stats and full-blown application profiling.
 
-`sps` is stared by Slurm *as the user* by employing a SPANK plugin which runs at the `slurm_spank_task_init` stage (see https://slurm.schedmd.com/spank.html); at the time of development this is the only possible way to launch a process as the user which is not immediately killed by the scheduler. This plugin calls a shell script and passes it several critical variables which are otherwise unavilable as standard environment variables. The scripts calls `sps` and passes the variables, then `sps` deamonises and runs until killed. It records CPU, memory & disk reads/writes per binary in an RRD-like memory structure, and writes them out into text logs. After the job finishes, a job eplilogue task (see https://slurm.schedmd.com/prolog_epilog.html) calls a series of linked clean up scripts which visualise the data into both ASCII and PNG plots, then writes the ASCII charts to the Slurm job log and compresses everything into a tarball.
+`sps` is started by Slurm *as the user* by employing a SPANK plugin which runs at the `slurm_spank_task_init` stage (see https://slurm.schedmd.com/spank.html); at the time of development this is the only possible way to launch a process as the user which is not immediately killed by the scheduler. This plugin calls a shell script and passes it several critical variables which are otherwise unavilable as standard environment variables. The scripts calls `sps` and passes the variables, then `sps` deamonises and runs until killed. It records CPU, memory & disk reads/writes per binary in an RRD-like memory structure, and writes them out into text logs. After the job finishes, a job eplilogue task (see https://slurm.schedmd.com/prolog_epilog.html) calls a series of linked clean up scripts which visualise the data into both ASCII and PNG plots, then writes the ASCII charts to the Slurm job log and compresses everything into a tarball.
 
 # Requirements
 
@@ -42,9 +42,18 @@ On the CCB systems, the files are installed as follows:
 
 The files must be available on all compute nodes and the Slurm master. Several of them contain hard coded paths that will need to be updated for local use (this could be improved in future versions).
 
-# Running locally
+# Running manually
 
-When testing the code to check that it works, note that you can run it directly in any login session and then kill it as normal using `sps-stop`. The output will be written to a folder called `sps-local`.
+When interactively testing the code to check that it works, note that you can launch it directly and then kill it as normal using `sps-stop`. The output will be written to a folder called `sps-local`. A similar approach could also be used to have on-demand rather than automatic profiling; simply ignore the SPANK plugin and epilogue script, and add the calls directly to the job script:
+
+```
+!#/bin/bash
+sps
+
+[Job commands here]
+
+sps-stop
+``` 
 
 # Notes on the design
 
