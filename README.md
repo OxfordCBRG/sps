@@ -16,7 +16,7 @@ The Slurm (or Simple) Profiling Service `sps` is a lightweight job profiler whic
 # Building
 
 - Ensure that you have both `rpm-build` and `rpmdevtools` installed
-- If you haven't done so already, run `rpmdev-structure` 
+- If you haven't done so already, run `rpmdev-setuptree` 
 - Download the tarball for one of the tagged releases; the file should have a name similar to `sps-3.0.tar.gz`
 - Build the source and binary files with `rpmbuild -ta TARFILE`, substituting `TARFILE` for the path to the download
 - Install the RPM found in `~/rpmbuild/RPMS/x86_64/` on every node and the Slurm master
@@ -25,15 +25,15 @@ Alternatively, untar the source and run `make`, then manually install the necess
 
 # Files Installed
 
-- **/usr/share/docs/sps/LICENSE**: the license for the software
-- **/usr/share/docs/sps/README.md**: this document
+- **/usr/share/doc/sps/LICENSE**: the license for the software
+- **/usr/share/doc/sps/README.md**: this document
 - **/usr/lib64/slurm/launch_sps.so**: the `sps` SPANK plugin
 - **/etc/slurm/process_sps.sh**: needs to be set to run under `TaskEpilog` in `slurm.conf`; calls `sps-stop` and then creates the results tarball
 - **/usr/bin/ckill**: kills a running instance of a program in the same cgroup
 - **/usr/bin/sps**: the sps binary
 - **/usr/bin/sps-stop**: calls `ckill`, `sps-sum` and `sps-plot`, in that order, to create the output files
 - **/usr/bin/sps-sum**: creates overview output which sum the data across all processes
-- **/usr/bin/sps-plot**: calls `gnuplot` to create the ascii and png charts
+- **/usr/bin/sps-plot**: calls `gnuplot` to create the ASCII and PNG charts
 
 `sps` must be installed on all compute nodes and the Slurm master.
 
