@@ -37,7 +37,7 @@ On the CCB systems, the files are installed as follows:
                      ccbspank.sh
                      taskepilog.sh
 /usr/lib64/slurm
-                     ccpspank.so
+                     ccbspank.so
 ```
 
 The files must be available on all compute nodes and the Slurm master. Several of them contain hard coded paths that will need to be updated for local use (this could be improved in future versions).
