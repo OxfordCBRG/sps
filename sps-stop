@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Terminate our process
-/package/sps/current/cgroup-kill sps || exit 1
+/usr/bin/ckill sps || exit 1
 
 # For regular jobs, the Job ID is sufficient. However, for array jobs,
 # we need to reconstruct the special array job ID and set the Job ID
@@ -43,6 +43,6 @@ restore_backup "write" &
 wait # For background tasks
 
 if [ -d ${SPSDIR} ]; then
-  /package/sps/current/sps-sum ${SPSROOT}*tsv
-  /package/sps/current/sps-plot ${SPSROOT}*tsv ${SPSROOT}*sum
+  /usr/bin/sps-sum ${SPSROOT}*tsv
+  /usr/bin/sps-plot ${SPSROOT}*tsv ${SPSROOT}*sum
 fi

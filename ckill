@@ -1,7 +1,7 @@
 #!/bin/bash
 
 if [ $# -ne 1 ]; then
-  echo USAGE: cgroup-kill executable
+  echo USAGE: ckill executable
   exit 1
 fi
 

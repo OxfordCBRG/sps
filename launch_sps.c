@@ -6,11 +6,10 @@
 #include <slurm/spank.h>
 
 /* All spank plugins must define this macro for the Slurm plugin loader. */
-SPANK_PLUGIN(ccbspank, 1);
+SPANK_PLUGIN(launch_sps, 1);
 
 int slurm_spank_task_init (spank_t sp, int ac, char **av)
 {
-    /* Uses unsafe string operations. Needs rewriting */
     int taskid;
     spank_get_item (sp, S_JOB_ID, &taskid);
     char task[64];
@@ -31,17 +30,7 @@ int slurm_spank_task_init (spank_t sp, int ac, char **av)
     char arr[64];
     sprintf(arr, "%d", arrid);
 
-    char command[512];
-    /* Hard coded, but the script can easily be modified*/
-    strcpy(command, "/bin/bash -c '/etc/slurm/ccbspank.sh ");
-    strcat(command,task);
-    strcat(command," ");
-    strcat(command,cpus);
-    strcat(command," ");
-    strcat(command,arrn);
-    strcat(command," ");
-    strcat(command,arr);
-    strcat(command,"'");
-    system(command);
+    if (execl("/usr/bin/sps", "sps", task, cpus, arrn, arr, NULL) == -1)
+        return 1;
     return (0);
 }

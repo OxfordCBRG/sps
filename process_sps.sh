@@ -10,7 +10,7 @@ if [ ! -z $AID ] && [ ! -z $TID ]; then
   JID=`echo ${AID}_${TID}`
 fi
 
-/package/sps/current/sps-stop
+/usr/bin/sps-stop
 
 # Now, get out output file from "scontrol" and check the directory that
 # it's pointing at

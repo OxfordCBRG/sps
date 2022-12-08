@@ -1,7 +1,5 @@
 #!/bin/bash
 
-module load gnuplot
-
 # No key for ASCII plots
 do_ascii_plot () {
   COMM="set terminal dumb 80 30; set title '$2'; set xlabel 'Job profiling step'; set key off; plot "
