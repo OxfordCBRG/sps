@@ -28,12 +28,13 @@ make all
 install --directory $RPM_BUILD_ROOT/usr/share/doc/sps
 install --directory $RPM_BUILD_ROOT/usr/lib64/slurm
 install --directory $RPM_BUILD_ROOT/usr/bin
+install --directory $RPM_BUILD_ROOT/etc/slurm
 
 install -m 644 LICENSE $RPM_BUILD_ROOT/usr/share/doc/sps
 install -m 644 README.md $RPM_BUILD_ROOT/usr/share/doc/sps
 install -m 755 ckill $RPM_BUILD_ROOT/usr/bin
 install -m 755 launch_sps.so $RPM_BUILD_ROOT/usr/lib64/slurm
-install -m 755 process_sps.sh $RPM_BUILD_ROOT/usr/bin
+install -m 755 process_sps.sh $RPM_BUILD_ROOT/etc/slurm
 install -m 755 sps $RPM_BUILD_ROOT/usr/bin
 install -m 755 sps-plot $RPM_BUILD_ROOT/usr/bin
 install -m 755 sps-stop $RPM_BUILD_ROOT/usr/bin
@@ -47,10 +48,10 @@ rm -rf $RPM_BUILD_ROOT
 /usr/share/doc/sps/README.md
 /usr/lib64/slurm/launch_sps.so
 /usr/bin/ckill
-/usr/bin/process_sps.sh
 /usr/bin/sps
 /usr/bin/sps-plot
 /usr/bin/sps-stop
 /usr/bin/sps-sum
+/etc/slurm/process_sps.sh
 
 %changelog

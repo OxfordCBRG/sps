@@ -30,7 +30,16 @@ int slurm_spank_task_init (spank_t sp, int ac, char **av)
     char arr[64];
     sprintf(arr, "%d", arrid);
 
-    if (execl("/usr/bin/sps", "sps", task, cpus, arrn, arr, NULL) == -1)
-        return 1;
+    char command[512];
+    strcpy(command, "/bin/bash -c '/usr/bin/sps ");
+    strcat(command,task);
+    strcat(command," ");
+    strcat(command,cpus);
+    strcat(command," ");
+    strcat(command,arrn);
+    strcat(command," ");
+    strcat(command,arr);
+    strcat(command,"'");
+    system(command);
     return (0);
 }
