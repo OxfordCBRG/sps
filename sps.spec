@@ -1,5 +1,5 @@
 Name: sps
-Version: 3.0
+Version: 3.2
 Release: 1%{?dist}
 Summary: The Slurm Profiling Service
 
