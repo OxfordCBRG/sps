@@ -13,7 +13,7 @@ The Slurm (or Simple) Profiling Service `sps` is a lightweight job profiler whic
 - Compiling the code requires a C compiler, a C++ compiler with c++-17 support and the Slurm development kit
 - The output ASCII and PNG charts require that Gnuplot is installed
 
-`sps` has been tested on CentOS 7 and CentOS 9 Stream in x64_64 only.
+`sps` has been tested on CentOS 7 and CentOS 9 Stream in x86_64 only.
 
 # Building
 
