@@ -34,7 +34,7 @@ struct Jobstats
 inline void get_data(struct Jobstats&);
 inline void shrink_data(struct Jobstats&);
 inline void write_output(struct Jobstats&);
-const unsigned long long get_uptime(void);
+unsigned long long get_uptime(void);
 const vector<string> split_on_space(const string&);
 const string file_to_string(const string&);
 void rotate_output(string&);
@@ -259,7 +259,7 @@ template<typename T> void shrink_vector(vector<T> &v)
     v.resize(v.size()/2); // Throw away last half of the data.
 }
 
-const unsigned long long get_uptime(void)
+unsigned long long get_uptime(void)
 {
     struct sysinfo info;
     if (sysinfo(&info) == -1)
