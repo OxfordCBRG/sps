@@ -1,0 +1,9 @@
+Package: sps
+Version: 3.3-1
+Section: base
+Priority: optional
+Architecture: amd64
+Depends: gnuplot
+Maintainer: Duncan Tooke <duncan.tooke@imm.ox.ac.uk>
+Description: 
+ The Slurm (or Simple) Profiling Service `sps` is a lightweight job profiler which bridges the gap between numerical job stats and full-blown application profiling.
