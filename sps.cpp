@@ -48,13 +48,15 @@ int main(int argc, char *argv[])
     // INITIALISE LOGGING
     string id = "-";
     Job.Cpu.Req = "1";
+    Job.Mem.Req = "0";
     string outputdir = "sps-local";
-    if (argc == 5) // This is Slurm, override defaults
+    if (argc == 6) // This is Slurm, override defaults
     {   // N.B Spank plugin can't use environment variables.
         id = string(argv[1]);         // JOBID
         Job.Cpu.Req = string(argv[2]);       // REQUESTED_CPUS
         string arrayjob = string(argv[3]);   // ARRAY_ID
         string arraytask = string(argv[4]);  // ARRAY_TASK
+	Job.Mem.Req = string(argv[5]);       // REQUESTED_MEM
         if (arrayjob != "0")          // Is 0 when not array job
             id = arrayjob + "_" + arraytask;
         outputdir = "sps-" + id;
@@ -70,12 +72,7 @@ int main(int argc, char *argv[])
     ios_base::sync_with_stdio(false); // Don't need C compatibility, faster.
     // INITIALISE DATA
     Job.Rate = 1;
-    Job.Mem.Req = file_to_string("/sys/fs/cgroup/memory/slurm/uid_" +
-        to_string(getuid()) + "/job_" + id + "/memory.soft_limit_in_bytes");
-    if (Job.Mem.Req == "") // Empty if not in a job
-        Job.Mem.Req = "0";
-    else
-        Job.Mem.Req = to_string(stof(Job.Mem.Req)/1024/1024/1024); // Want GB, not B.
+    Job.Mem.Req = to_string(stof(Job.Mem.Req)/1024); // Want GB, not MB.
     Job.Read.Req = "0";
     Job.Write.Req = "0";
     Job.Cgroup = file_to_string("/proc/" + to_string(getpid()) + "/cgroup");

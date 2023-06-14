@@ -9,13 +9,17 @@ TID=${SLURM_ARRAY_TASK_ID}
 if [ ! -z $AID ] && [ ! -z $TID ]; then
   JID=`echo ${AID}_${TID}`
 fi
-
+  
 /usr/bin/sps-stop
 
 # Now, get out output file from "scontrol" and check the directory that
 # it's pointing at
 OUT=`/usr/bin/scontrol show jobid ${JID} | /usr/bin/sed -n '/StdOut/s/^.*=//p'`
 DIR=`/usr/bin/dirname "$OUT"`
+if [ -z $OUT ]; then # Interactive job
+  OUT=/dev/null
+  mv sps-${JID}_-2 sps-${JID}
+fi
 
 # So long as that's a real directory, we should be good
 if [ ! -z "$DIR" ] && [ -d "$DIR" ]; then

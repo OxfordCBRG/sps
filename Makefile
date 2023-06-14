@@ -1,5 +1,5 @@
-version = 3.3
-release = 1
+version = 3.4
+release = 2
 all : sps launch_sps
 sps : sps.cpp 
 	g++ -Wall -Wextra -Wpedantic -Werror -std=c++17 -O3 -o sps sps.cpp 
@@ -23,4 +23,4 @@ deb : prefix = ./sps_$(version)-$(release)/
 deb : all fake_install
 	sed -i 's/Version: .*/Version: $(version)-$(release)/' DEBIAN/control
 	cp -ar DEBIAN sps_$(version)-$(release)
-	dpkg-deb --build sps_$(version)-$(release)
+	dpkg-deb --build --root-owner-group sps_$(version)-$(release)
