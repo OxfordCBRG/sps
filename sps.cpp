@@ -14,6 +14,10 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#ifdef HAVE_NVML
+#include "nvidia_gpu.h"
+#endif
+
 
 using namespace std;
 
@@ -29,6 +33,9 @@ struct Jobstats
     unsigned int Rate;
     bool Rewrite;
     Metric Cpu, Mem, Read, Write;
+#ifdef HAVE_NVML
+    Metric GPU_load, GPU_mem, GPU_power;
+#endif
     string Cgroup;
 };
 
@@ -84,6 +91,29 @@ int main(int argc, char *argv[])
     Job.Mem.File = filestem + "-mem.tsv";
     Job.Read.File = filestem + "-read.tsv";
     Job.Write.File = filestem + "-write.tsv";
+    #ifdef HAVE_NVML
+    Job.GPU_load.File = filestem + "-gpu_load.tsv";
+    Job.GPU_mem.File = filestem + "-gpu_mem.tsv";
+    Job.GPU_power.File = filestem + "-gpu_power.tsv";
+
+    Job.GPU_load.Req = "0";
+    Job.GPU_mem.Req = "0";
+    Job.GPU_power.Req = "0";
+
+    unsigned int gpu_count;
+    NVML_RT_CALL(nvmlInit());
+    NVML_RT_CALL(nvmlDeviceGetCount(&gpu_count));
+    int i;
+    for (i = 0; i < gpu_count; i++)
+    {
+      char name[NVML_DEVICE_NAME_BUFFER_SIZE];
+      char serial[NVML_DEVICE_SERIAL_BUFFER_SIZE];
+      nvmlDevice_t device;
+      NVML_RT_CALL(nvmlDeviceGetHandleByIndex(i, &device));
+      NVML_RT_CALL(nvmlDeviceGetName(device, name, NVML_DEVICE_NAME_BUFFER_SIZE ) );
+      NVML_RT_CALL(nvmlDeviceGetSerial(device, serial, NVML_DEVICE_SERIAL_BUFFER_SIZE));
+    }
+    #endif
     // LOG STARTUP
     log << "CBB Profiling started ";
     time_t start = chrono::system_clock::to_time_t(chrono::system_clock::now());
@@ -91,6 +121,9 @@ int main(int argc, char *argv[])
     log << "SLURM_JOB_ID\t\t" << id << endl;
     log << "REQ_CPU_CORES\t\t" << Job.Cpu.Req << endl;
     log << "REQ_MEMORY_GB\t\t" << Job.Mem.Req << endl;
+    #ifdef HAVE_NVML
+    log << "found " << gpu_count << " NVIDIA GPU" << endl;
+    #endif
     log << "Starting profiling...\n";
     log.flush();
     // READY TO GO
@@ -107,6 +140,9 @@ int main(int argc, char *argv[])
                 shrink_data(Job); // RRD-like resizing to control size
             sleep(Job.Rate);
         }
+	#ifdef HAVE_NVML
+	NVML_RT_CALL( nvmlShutdown( ) );
+	#endif
         return 0;
         // END MAIN LOOP
     }
@@ -114,6 +150,9 @@ int main(int argc, char *argv[])
     {
         log << e.what() << endl;
         log.flush();
+	#ifdef HAVE_NVML
+	NVML_RT_CALL( nvmlShutdown( ) );
+	#endif
         exit(1);
     }
 } 
@@ -128,6 +167,14 @@ inline void get_data(struct Jobstats &Job)
         Vec.push_back(0.0);
     for (auto & [Comm, Vec] : Job.Write.Data)
         Vec.push_back(0.0);
+    #ifdef HAVE_NVML
+    for (auto & [Comm, Vec] : Job.GPU_load.Data)
+        Vec.push_back(0.0);
+    for (auto & [Comm, Vec] : Job.GPU_mem.Data)
+        Vec.push_back(0.0);
+    for (auto & [Comm, Vec] : Job.GPU_power.Data)
+        Vec.push_back(0.0);
+    #endif
     for (const auto & pd : filesystem::directory_iterator("/proc/"))
     {
         const auto full_path = pd.path();
@@ -174,6 +221,37 @@ inline void get_data(struct Jobstats &Job)
         Job.Read.Data[comm].back() += read;   // grand total.
         Job.Write.Data[comm].back() += write;
     }
+    #ifdef HAVE_NVML
+    // get GPU data
+    unsigned int gpu_count;
+    NVML_RT_CALL(nvmlInit());
+    NVML_RT_CALL(nvmlDeviceGetCount(&gpu_count));
+    int i;
+    for (i = 0; i < gpu_count; i++)
+    {
+      char serial[NVML_DEVICE_SERIAL_BUFFER_SIZE];
+      nvmlDevice_t device;
+      nvmlUtilization_st device_utilization;
+      unsigned int power;
+      NVML_RT_CALL(nvmlDeviceGetHandleByIndex(i, &device));
+      NVML_RT_CALL(nvmlDeviceGetSerial(device, serial, NVML_DEVICE_SERIAL_BUFFER_SIZE));
+      NVML_RT_CALL(nvmlDeviceGetUtilizationRates(device, &device_utilization));
+      NVML_RT_CALL(nvmlDeviceGetPowerUsage(device, &power));
+
+      if (!Job.GPU_load.Data.count(serial)) // First time GPU seen
+        {
+
+	  Job.GPU_load.Data.emplace(serial, vector<float>(Job.Tick, 0.0));
+	  Job.GPU_mem.Data.emplace(serial, vector<float>(Job.Tick, 0.0));
+	  Job.GPU_power.Data.emplace(serial, vector<float>(Job.Tick, 0.0));
+	  Job.Rewrite = true;
+	}
+
+      Job.GPU_load.Data[serial].back() += device_utilization.gpu;
+      Job.GPU_mem.Data[serial].back() += device_utilization.memory;
+      Job.GPU_power.Data[serial].back() += static_cast<float>(power) / 1000.; // to convert to Watts
+    }
+    #endif
 }
 
 inline void shrink_data(Jobstats &Job)
@@ -189,6 +267,14 @@ inline void shrink_data(Jobstats &Job)
         shrink_vector(data);
     for (auto & [pid, data] : Job.Write.Data)
         shrink_vector(data);
+    #ifdef HAVE_NVML
+    for (auto & [pid, data] : Job.GPU_load.Data)
+        shrink_vector(data);
+    for (auto & [pid, data] : Job.GPU_mem.Data)
+        shrink_vector(data);
+    for (auto & [pid, data] : Job.GPU_power.Data)
+        shrink_vector(data);
+    #endif
     Job.Rate *= 2;
     Job.Rewrite = true; // History has changed. Full rewrite needed.
 }
@@ -201,6 +287,11 @@ inline void write_output(struct Jobstats &Job)
         rewrite_tab(Job.Mem, Job.Tick, Job.Rate); 
         rewrite_tab(Job.Read, Job.Tick, Job.Rate); 
         rewrite_tab(Job.Write, Job.Tick, Job.Rate);
+	#ifdef HAVE_NVML
+	rewrite_tab(Job.GPU_load, Job.Tick, Job.Rate);
+	rewrite_tab(Job.GPU_mem, Job.Tick, Job.Rate);
+	rewrite_tab(Job.GPU_power, Job.Tick, Job.Rate);
+	#endif
         Job.Rewrite = false;
     }
     else // Just need the latest data appending
@@ -209,6 +300,11 @@ inline void write_output(struct Jobstats &Job)
         append_tab(Job.Mem, Job.Tick, Job.Rate); 
         append_tab(Job.Read, Job.Tick, Job.Rate); 
         append_tab(Job.Write, Job.Tick, Job.Rate);
+	#ifdef HAVE_NVML
+	append_tab(Job.GPU_load, Job.Tick, Job.Rate);
+	append_tab(Job.GPU_mem, Job.Tick, Job.Rate);
+	append_tab(Job.GPU_power, Job.Tick, Job.Rate);
+	#endif
     }
 }
 
