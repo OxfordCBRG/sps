@@ -22,6 +22,7 @@ struct Metric
     string Req, File;
     map<string, vector<float>> Data;
 };
+
 struct Jobstats
 {
     unsigned long long Tick;
@@ -39,8 +40,8 @@ const vector<string> split_on_space(const string&);
 const string file_to_string(const string&);
 void rotate_output(string&);
 template<typename T> void shrink_vector(vector<T> &);
-void rewrite_tab(Metric&, unsigned long long int&);
-void append_tab(Metric&, unsigned long long int&);
+void rewrite_tab(Metric&, unsigned long long int&, unsigned int&);
+void append_tab(Metric&, unsigned long long int&, unsigned int&);
 
 int main(int argc, char *argv[])
 {
@@ -196,22 +197,22 @@ inline void write_output(struct Jobstats &Job)
 {
     if (Job.Rewrite) // We have historical data to write
     {
-        rewrite_tab(Job.Cpu, Job.Tick); 
-        rewrite_tab(Job.Mem, Job.Tick); 
-        rewrite_tab(Job.Read, Job.Tick); 
-        rewrite_tab(Job.Write, Job.Tick); 
+        rewrite_tab(Job.Cpu, Job.Tick, Job.Rate); 
+        rewrite_tab(Job.Mem, Job.Tick, Job.Rate); 
+        rewrite_tab(Job.Read, Job.Tick, Job.Rate); 
+        rewrite_tab(Job.Write, Job.Tick, Job.Rate);
         Job.Rewrite = false;
     }
     else // Just need the latest data appending
     {
-        append_tab(Job.Cpu, Job.Tick); 
-        append_tab(Job.Mem, Job.Tick); 
-        append_tab(Job.Read, Job.Tick); 
-        append_tab(Job.Write, Job.Tick); 
+        append_tab(Job.Cpu, Job.Tick, Job.Rate); 
+        append_tab(Job.Mem, Job.Tick, Job.Rate); 
+        append_tab(Job.Read, Job.Tick, Job.Rate); 
+        append_tab(Job.Write, Job.Tick, Job.Rate);
     }
 }
 
-void rewrite_tab(Metric &met, unsigned long long int &current_tick) 
+void rewrite_tab(Metric &met, unsigned long long int &current_tick, unsigned int &rate) 
 {
     if (filesystem::exists(met.File)) // Backup file, we may get killed
         filesystem::rename(met.File, met.File + ".bak");
@@ -224,7 +225,7 @@ void rewrite_tab(Metric &met, unsigned long long int &current_tick)
     tab << "\n";
     for (unsigned long long int tick = 1; tick <= current_tick; tick++)
     {
-        tab << tick << "\t" << met.Req;
+        tab << tick * rate << "\t" << met.Req;
         for (const auto & [Comm, Vec] : met.Data)
             tab << "\t" << Vec.at(tick - 1); // Vector is base 0
         tab << "\n";
@@ -233,12 +234,12 @@ void rewrite_tab(Metric &met, unsigned long long int &current_tick)
     filesystem::remove(met.File + ".bak"); // No throw if not present
 }
 
-void append_tab(Metric &met, unsigned long long int &current_tick) 
+void append_tab(Metric &met, unsigned long long int &current_tick, unsigned int &rate) 
 {
     ofstream tab(met.File, ios::app);
     if (!tab.is_open())
         throw runtime_error("Open of tab file failed\n");
-    tab << current_tick << "\t" << met.Req;
+    tab << current_tick * rate << "\t" << met.Req;
     for (const auto & [pid, value] : met.Data)
         tab << "\t" << value.back();
     tab << "\n";
