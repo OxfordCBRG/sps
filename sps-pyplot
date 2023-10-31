@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+
+
+from pathlib import Path
+import argparse
+import pandas
+from matplotlib import pyplot
+import matplotlib.colors as mcolors
+import datetime
+
+METRICS = ["cpu", "mem", "read", "write"]
+GPU_METRICS = ["gpu_load", "gpu_mem", "gpu_power"]
+
+
+def convert_time(value):
+    return datetime.timedelta(seconds=float(value))
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("spsdir", type=Path,
+                        help="directory containing metrics collected by sps")
+    parser.add_argument("-o", "--output",
+                        help="write output to file")
+    args = parser.parse_args()
+
+    if not args.spsdir.exists():
+        parser.error(f"input directory '{args.spsdir}' does not exist")
+    print(args.spsdir.name)
+
+    data = {}
+    have_gpu = True
+    for metric in METRICS + GPU_METRICS:
+        fname = args.spsdir / (args.spsdir.name + f'-{metric}.tsv')
+        if not fname.exists:
+            if metric in METRICS:
+                parser.error(f"metrics {fname} does not exist")
+            else:
+                have_gpu = False
+                continue
+        data[metric] = pandas.read_csv(fname, delimiter="\t", index_col=0,
+                                       converters={"#TIME": convert_time})
+        data[metric].drop(columns="REQUESTED", inplace=True)
+
+    data["read"] = -data["read"]
+
+    nrows = 3
+    if have_gpu:
+        ncols = 2
+    else:
+        ncols = 1
+
+    colours = {}
+    for c, p in zip(data["cpu"].columns, mcolors.TABLEAU_COLORS.keys()):
+        colours[c] = p
+
+    fig, axs = pyplot.subplots(nrows, ncols, sharex=True)
+    handles_left = data["cpu"].plot(ax=axs[0, 0], color=colours, legend=False)
+    data["mem"].plot(ax=axs[1, 0], color=colours, legend=False)
+    axs[2, 0].axhline(0, color='k', ls=":")
+    data["write"].plot(ax=axs[2, 0], color=colours, legend=False)
+    data["read"].plot(ax=axs[2, 0], color=colours, legend=False)
+
+    axs[0, 0].set_ylabel("CPU load")
+    axs[1, 0].set_ylabel("memory [GB]")
+    axs[2, 0].set_ylabel("I/O (-ve read, +ve write) [GB]")
+
+    read, write = axs[2, 0].get_ylim()
+    io = max(-read, write)
+    axs[2, 0].set_ylim([-io, io])
+
+    if have_gpu:
+        for i, m in enumerate(GPU_METRICS):
+            handles_right = data[m].plot(ax=axs[i, 1], legend=False)
+
+        axs[0, 1].set_ylabel("GPU load")
+        axs[1, 1].set_ylabel("GPU memory [GB]")
+        axs[2, 1].set_ylabel("GPU power [Watt]")
+
+    axs[2, 0].set_xlabel("time [s]")
+    axs[2, 0].legend(
+        *handles_left.get_legend_handles_labels(),
+        loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=5)
+    if have_gpu:
+        axs[2, 1].set_xlabel("time [s]")
+        axs[2, 1].legend(
+            *handles_right.get_legend_handles_labels(),
+            loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=5)
+
+    pyplot.tight_layout()
+    pyplot.show()
+
+
+if __name__ == '__main__':
+    main()
