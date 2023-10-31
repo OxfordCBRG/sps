@@ -1,3 +1,6 @@
+#ifndef NVIDIA_GPU_H
+#define NVIDIA_GPU_H
+
 #include <map>
 #include <string>
 #include <vector>
@@ -25,4 +28,4 @@ using namespace std;
     }
 #endif  // NVML_RT_CALL
 
-
+#endif // NVIDIA_GPU_H
