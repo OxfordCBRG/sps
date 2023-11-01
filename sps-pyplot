@@ -32,7 +32,7 @@ def main():
     have_gpu = True
     for metric in METRICS + GPU_METRICS:
         fname = args.spsdir / (args.spsdir.name + f'-{metric}.tsv')
-        if not fname.exists:
+        if not fname.exists():
             if metric in METRICS:
                 parser.error(f"metrics {fname} does not exist")
             else:
@@ -54,7 +54,7 @@ def main():
     for c, p in zip(data["cpu"].columns, mcolors.TABLEAU_COLORS.keys()):
         colours[c] = p
 
-    fig, axs = pyplot.subplots(nrows, ncols, sharex=True)
+    fig, axs = pyplot.subplots(nrows, ncols, sharex=True, squeeze=False)
     handles_left = data["cpu"].plot(ax=axs[0, 0], color=colours, legend=False)
     data["mem"].plot(ax=axs[1, 0], color=colours, legend=False)
     axs[2, 0].axhline(0, color='k', ls=":")
