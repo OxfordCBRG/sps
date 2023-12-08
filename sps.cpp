@@ -232,10 +232,12 @@ inline void get_data(struct Jobstats &Job)
       char serial[NVML_DEVICE_SERIAL_BUFFER_SIZE];
       nvmlDevice_t device;
       nvmlUtilization_st device_utilization;
+      nvmlMemory_t device_memory;
       unsigned int power;
       NVML_RT_CALL(nvmlDeviceGetHandleByIndex(i, &device));
       NVML_RT_CALL(nvmlDeviceGetSerial(device, serial, NVML_DEVICE_SERIAL_BUFFER_SIZE));
       NVML_RT_CALL(nvmlDeviceGetUtilizationRates(device, &device_utilization));
+      NVML_RT_CALL(nvmlDeviceGetMemoryInfo(device, &device_memory));
       NVML_RT_CALL(nvmlDeviceGetPowerUsage(device, &power));
 
       if (!Job.GPU_load.Data.count(serial)) // First time GPU seen
@@ -248,7 +250,7 @@ inline void get_data(struct Jobstats &Job)
 	}
 
       Job.GPU_load.Data[serial].back() += device_utilization.gpu;
-      Job.GPU_mem.Data[serial].back() += device_utilization.memory;
+      Job.GPU_mem.Data[serial].back() += device_memory.used  / 1024 / 1024 / 1024; // Want GB
       Job.GPU_power.Data[serial].back() += static_cast<float>(power) / 1000.; // to convert to Watts
     }
     #endif
