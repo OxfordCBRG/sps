@@ -34,7 +34,7 @@ struct Jobstats
     bool Rewrite;
     Metric Cpu, Mem, Read, Write;
 #ifdef HAVE_NVML
-    Metric GPU_load, GPU_mem, GPU_power;
+    vector<Metric> GPU_load, GPU_mem, GPU_power;
 #endif
     string Cgroup;
 };
@@ -92,26 +92,31 @@ int main(int argc, char *argv[])
     Job.Read.File = filestem + "-read.tsv";
     Job.Write.File = filestem + "-write.tsv";
     #ifdef HAVE_NVML
-    Job.GPU_load.File = filestem + "-gpu_load.tsv";
-    Job.GPU_mem.File = filestem + "-gpu_mem.tsv";
-    Job.GPU_power.File = filestem + "-gpu_power.tsv";
-
-    Job.GPU_load.Req = "0";
-    Job.GPU_mem.Req = "0";
-    Job.GPU_power.Req = "0";
-
     unsigned int gpu_count;
     NVML_RT_CALL(nvmlInit());
     NVML_RT_CALL(nvmlDeviceGetCount(&gpu_count));
+    Job.GPU_load.reserve(gpu_count);
+    Job.GPU_mem.reserve(gpu_count);
+    Job.GPU_power.reserve(gpu_count);
+
     int i;
     for (i = 0; i < gpu_count; i++)
     {
-      char name[NVML_DEVICE_NAME_BUFFER_SIZE];
-      char serial[NVML_DEVICE_SERIAL_BUFFER_SIZE];
       nvmlDevice_t device;
+      nvmlMemory_t device_memory;
+      Metric gload, gmem, gpower;
       NVML_RT_CALL(nvmlDeviceGetHandleByIndex(i, &device));
-      NVML_RT_CALL(nvmlDeviceGetName(device, name, NVML_DEVICE_NAME_BUFFER_SIZE ) );
-      NVML_RT_CALL(nvmlDeviceGetSerial(device, serial, NVML_DEVICE_SERIAL_BUFFER_SIZE));
+      NVML_RT_CALL(nvmlDeviceGetMemoryInfo(device, &device_memory));
+      gload.File = filestem + "-gpu_load-" + to_string(i) + ".tsv";
+      gload.Req = "0";
+      gmem.File = filestem + "-gpu_mem-" + to_string(i) + ".tsv";
+      gmem.Req = to_string(device_memory.total  / 1024 / 1024 / 1024); // Want GB
+      gpower.File = filestem + "-gpu_power-" + to_string(i) + ".tsv";
+      gpower.Req = "0";
+
+      Job.GPU_load.push_back(gload);
+      Job.GPU_mem.push_back(gmem);
+      Job.GPU_power.push_back(gpower);
     }
     #endif
     // LOG STARTUP
@@ -129,7 +134,7 @@ int main(int argc, char *argv[])
     // READY TO GO
     try
     {
-        if (daemon(1,0) == -1) // Don't chdir, do send output to /dev/null
+      if (daemon(1,0) == -1) // Don't chdir, do send output to /dev/null
             throw runtime_error("Failed to daemonise\n");
         // MAIN LOOP
         for (Job.Tick = 1; ; Job.Tick++) // Invariant: Tick = current iteration
@@ -168,12 +173,15 @@ inline void get_data(struct Jobstats &Job)
     for (auto & [Comm, Vec] : Job.Write.Data)
         Vec.push_back(0.0);
     #ifdef HAVE_NVML
-    for (auto & [Comm, Vec] : Job.GPU_load.Data)
+    for (auto & Gpu: Job.GPU_load)
+      for (auto & [Comm, Vec] : Gpu.Data)
+	Vec.push_back(0.0);
+    for (auto & Gpu: Job.GPU_mem)
+      for (auto & [Comm, Vec] : Gpu.Data)
         Vec.push_back(0.0);
-    for (auto & [Comm, Vec] : Job.GPU_mem.Data)
-        Vec.push_back(0.0);
-    for (auto & [Comm, Vec] : Job.GPU_power.Data)
-        Vec.push_back(0.0);
+    for (auto & Gpu: Job.GPU_power)
+      for (auto & [Comm, Vec] : Gpu.Data)
+	Vec.push_back(0.0);
     #endif
     for (const auto & pd : filesystem::directory_iterator("/proc/"))
     {
@@ -239,19 +247,44 @@ inline void get_data(struct Jobstats &Job)
       NVML_RT_CALL(nvmlDeviceGetUtilizationRates(device, &device_utilization));
       NVML_RT_CALL(nvmlDeviceGetMemoryInfo(device, &device_memory));
       NVML_RT_CALL(nvmlDeviceGetPowerUsage(device, &power));
+      string comm = "total";
 
-      if (!Job.GPU_load.Data.count(serial)) // First time GPU seen
+      if (!Job.GPU_load[i].Data.count(comm)) // First time GPU seen
         {
 
-	  Job.GPU_load.Data.emplace(serial, vector<float>(Job.Tick, 0.0));
-	  Job.GPU_mem.Data.emplace(serial, vector<float>(Job.Tick, 0.0));
-	  Job.GPU_power.Data.emplace(serial, vector<float>(Job.Tick, 0.0));
+	  Job.GPU_load[i].Data.emplace(comm, vector<float>(Job.Tick, 0.0));
+	  Job.GPU_mem[i].Data.emplace(comm, vector<float>(Job.Tick, 0.0));
+	  Job.GPU_power[i].Data.emplace(comm, vector<float>(Job.Tick, 0.0));
 	  Job.Rewrite = true;
 	}
 
-      Job.GPU_load.Data[serial].back() += device_utilization.gpu;
-      Job.GPU_mem.Data[serial].back() += device_memory.used  / 1024 / 1024 / 1024; // Want GB
-      Job.GPU_power.Data[serial].back() += static_cast<float>(power) / 1000.; // to convert to Watts
+      Job.GPU_load[i].Data[comm].back() += device_utilization.gpu;
+      Job.GPU_mem[i].Data[comm].back() += device_memory.used  / 1024 / 1024 / 1024; // Want GB
+      Job.GPU_power[i].Data[comm].back() += static_cast<float>(power) / 1000.; // to convert to Watts
+
+      // find programs running on GPU
+      unsigned int info_count;
+      nvmlReturn_t status;
+      nvmlProcessInfo_t *infos;
+      info_count = 0;
+      status = nvmlDeviceGetComputeRunningProcesses(device, &info_count, infos);
+      if (status == NVML_ERROR_INSUFFICIENT_SIZE) {
+	info_count += 10;
+	infos = new nvmlProcessInfo_t[info_count];
+	NVML_RT_CALL(nvmlDeviceGetComputeRunningProcesses(device, &info_count, infos));
+	int j;
+	for (j=0; j<info_count; j++) {
+	  string gpid_root = "/proc/" + to_string(infos[j].pid);
+	  comm = file_to_string(gpid_root + "/comm");
+	  if (!Job.GPU_mem[i].Data.count(comm)) // First time GPU process seen
+	    {
+	      Job.GPU_mem[i].Data.emplace(comm, vector<float>(Job.Tick, 0.0));
+	      Job.Rewrite = true;
+	    }
+	  Job.GPU_mem[i].Data[comm].back() += infos[j].usedGpuMemory / 1024 / 1024 / 1024; // Want GB
+	  delete[] infos;
+	}
+      }
     }
     #endif
 }
@@ -270,11 +303,14 @@ inline void shrink_data(Jobstats &Job)
     for (auto & [pid, data] : Job.Write.Data)
         shrink_vector(data);
     #ifdef HAVE_NVML
-    for (auto & [pid, data] : Job.GPU_load.Data)
+    for (auto & Gpu: Job.GPU_load)
+      for (auto & [pid, data] : Gpu.Data)
+	shrink_vector(data);
+    for (auto & Gpu: Job.GPU_mem)
+      for (auto & [pid, data] : Gpu.Data)
         shrink_vector(data);
-    for (auto & [pid, data] : Job.GPU_mem.Data)
-        shrink_vector(data);
-    for (auto & [pid, data] : Job.GPU_power.Data)
+    for (auto & Gpu: Job.GPU_power)
+      for (auto & [pid, data] : Gpu.Data)
         shrink_vector(data);
     #endif
     Job.Rate *= 2;
@@ -290,9 +326,12 @@ inline void write_output(struct Jobstats &Job)
         rewrite_tab(Job.Read, Job.Tick, Job.Rate); 
         rewrite_tab(Job.Write, Job.Tick, Job.Rate);
 	#ifdef HAVE_NVML
-	rewrite_tab(Job.GPU_load, Job.Tick, Job.Rate);
-	rewrite_tab(Job.GPU_mem, Job.Tick, Job.Rate);
-	rewrite_tab(Job.GPU_power, Job.Tick, Job.Rate);
+	for (auto & Gpu: Job.GPU_load)
+	  rewrite_tab(Gpu, Job.Tick, Job.Rate);
+	for (auto & Gpu: Job.GPU_mem)
+	  rewrite_tab(Gpu, Job.Tick, Job.Rate);
+	for (auto & Gpu: Job.GPU_power)
+	  rewrite_tab(Gpu, Job.Tick, Job.Rate);
 	#endif
         Job.Rewrite = false;
     }
@@ -303,9 +342,12 @@ inline void write_output(struct Jobstats &Job)
         append_tab(Job.Read, Job.Tick, Job.Rate); 
         append_tab(Job.Write, Job.Tick, Job.Rate);
 	#ifdef HAVE_NVML
-	append_tab(Job.GPU_load, Job.Tick, Job.Rate);
-	append_tab(Job.GPU_mem, Job.Tick, Job.Rate);
-	append_tab(Job.GPU_power, Job.Tick, Job.Rate);
+	for (auto & Gpu: Job.GPU_load)
+	  append_tab(Gpu, Job.Tick, Job.Rate);
+	for (auto & Gpu: Job.GPU_mem)
+	  append_tab(Gpu, Job.Tick, Job.Rate);
+	for (auto & Gpu: Job.GPU_power)
+	  append_tab(Gpu, Job.Tick, Job.Rate);
 	#endif
     }
 }
