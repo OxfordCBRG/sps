@@ -67,6 +67,21 @@ int main(int argc, char *argv[])
             id = arrayjob + "_" + arraytask;
         outputdir = "sps-" + id;
     }
+    else {
+      // check the environment for slurm variables
+      const char *env_slurm_job_id = getenv("SLURM_JOB_ID");
+      const char *env_slurm_array_job_id = getenv("SLURM_ARRAY_JOB_ID");
+      const char *env_slurm_array_task_id = getenv("SLURM_ARRAY_TASK_ID");
+      const char *env_slurm_num_cpus = getenv("SLURM_CPUS_ON_NODE");
+      if (env_slurm_num_cpus)
+	Job.Cpu.Req = string(env_slurm_num_cpus);  // REQUESTED_CPUS
+      if (env_slurm_job_id)
+	id = string(env_slurm_job_id); // JOBID
+      if (env_slurm_array_job_id) // ARRAYID
+	id = string(env_slurm_array_job_id) + "_" + string(env_slurm_array_task_id); // ARRAY_TASK
+      if (id != "-")
+	outputdir = "sps-" + id;
+    }
     if (filesystem::exists(outputdir))
         rotate_output(outputdir);     // Up to 9 versions
     filesystem::create_directory(outputdir);
