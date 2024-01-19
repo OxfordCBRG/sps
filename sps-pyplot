@@ -65,7 +65,6 @@ def main():
 
     if not args.spsdir.exists():
         parser.error(f"input directory '{args.spsdir}' does not exist")
-    print(args.spsdir.name)
 
     try:
         data = load_data(args.spsdir)
@@ -78,7 +77,9 @@ def main():
     colours["requested"] = 'k'
 
     if args.gpu_mem:
-        fig, axs = pyplot.subplots(data["nGPUs"], 1, sharex=True)
+        fig, axs = pyplot.subplots(
+            data["nGPUs"], 1, sharex=True,
+            figsize=(10, 1.6*(data["nGPUs"]+1)))
         used_colours = {}
         for g in range(data["nGPUs"]):
             data[f"gpu_mem-{g}"].drop(columns="total").plot(
@@ -101,7 +102,8 @@ def main():
         else:
             ncols = 1
 
-        fig, axs = pyplot.subplots(nrows, ncols, sharex=True, squeeze=False)
+        fig, axs = pyplot.subplots(nrows, ncols, sharex=True, squeeze=False,
+                                   figsize=(20, 7.5*ncols))
         data["cpu"].plot(ax=axs[0, 0], color=colours, legend=False)
         data["mem"].plot(ax=axs[1, 0], color=colours, legend=False)
         axs[2, 0].axhline(0, color='k', ls=":")
@@ -126,14 +128,19 @@ def main():
         axs[2, 0].set_xlabel("time [s]")
         axs[2, 0].legend(
             *axs[0, 0].get_legend_handles_labels(),
-            loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=5)
+            loc="upper center", bbox_to_anchor=(0.5, -0.5), ncol=5)
         if data["nGPUs"] > 0:
             axs[2, 1].set_xlabel("time [s]")
             axs[2, 1].legend(
                 *axs[2, 1].get_legend_handles_labels(),
-                loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=5)
+                loc="upper center", bbox_to_anchor=(0.5, -0.5), ncol=5)
 
-    pyplot.show()
+        fig.autofmt_xdate(rotation=45)
+
+    if args.output is not None:
+        pyplot.savefig(args.output)
+    else:
+        pyplot.show()
 
 
 if __name__ == '__main__':
