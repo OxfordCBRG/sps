@@ -103,7 +103,7 @@ def main():
             ncols = 1
 
         fig, axs = pyplot.subplots(nrows, ncols, sharex=True, squeeze=False,
-                                   figsize=(20, 7.5*ncols))
+                                   figsize=(10*ncols, 15))
         data["cpu"].plot(ax=axs[0, 0], color=colours, legend=False)
         data["mem"].plot(ax=axs[1, 0], color=colours, legend=False)
         axs[2, 0].axhline(0, color='k', ls=":")
@@ -120,10 +120,11 @@ def main():
         io = max(-read, write)
         axs[2, 0].set_ylim([-io, io])
 
-        for i, m in enumerate(GPU_METRICS):
-            for g in range(data["nGPUs"]):
-                axs[i, 1].plot(data[f"{m}-{g}"]["total"], label=f"GPU {g}")
-            axs[i, 1].set_ylabel(GPU_LABELS[i])
+        if data["nGPUs"] > 0:
+            for i, m in enumerate(GPU_METRICS):
+                for g in range(data["nGPUs"]):
+                    axs[i, 1].plot(data[f"{m}-{g}"]["total"], label=f"GPU {g}")
+                axs[i, 1].set_ylabel(GPU_LABELS[i])
 
         axs[2, 0].set_xlabel("time [s]")
         axs[2, 0].legend(
