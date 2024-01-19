@@ -26,6 +26,7 @@ endif()
 
 add_executable(sps sps.cpp)
 target_link_libraries(sps PRIVATE stdc++fs)
+
 if(CMAKE_CUDA_COMPILER)
   target_link_libraries(sps PRIVATE CUDA::nvml)
   target_compile_definitions(sps PRIVATE HAVE_NVML)
@@ -34,3 +35,4 @@ endif()
 
 
 install(TARGETS sps DESTINATION bin)
+install(PROGRAMS ckill sps-pyplot sps-stop DESTINATION bin)
