@@ -7,6 +7,7 @@ project(
 set(CMAKE_CXX_STANDARD 17)
 
 include(CheckIncludeFile)
+include(GNUInstallDirs)
 
 
 # Find spank header
@@ -15,7 +16,7 @@ check_include_file(slurm/spank.h HAVE_SPANK_HEADER)
 if (HAVE_SPANK_HEADER)
   add_library(launch_sps MODULE launch_sps.c)
   set_target_properties(launch_sps PROPERTIES PREFIX "")
-  install(TARGETS launch_sps DESTINATION lib/slurm)
+  install(TARGETS launch_sps DESTINATION ${CMAKE_INSTALL_LIBDIR}/slurm)
 endif()
 
 add_executable(sps sps.cpp)
