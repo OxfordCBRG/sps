@@ -5,7 +5,6 @@ from pathlib import Path
 import argparse
 import pandas
 from matplotlib import pyplot
-import matplotlib.colors as mcolors
 import datetime
 
 METRICS = ["cpu", "mem", "read", "write"]
@@ -71,26 +70,16 @@ def main():
     except RuntimeError as e:
         parser.error(e)
 
-    colours = {}
-    for c, p in zip(data["cpu"].columns, mcolors.TABLEAU_COLORS.keys()):
-        colours[c] = p
-    colours["requested"] = 'k'
-
     if args.gpu_mem:
         fig, axs = pyplot.subplots(
             data["nGPUs"], 1, sharex=True,
             figsize=(10, 1.6*(data["nGPUs"]+1)))
-        used_colours = {}
         for g in range(data["nGPUs"]):
             data[f"gpu_mem-{g}"].drop(columns="total").plot(
-                ax=axs[g], color=colours, legend=False)
-            for c in data[f"gpu_mem-{g}"].drop(columns="total").columns:
-                used_colours[c] = colours[c]
+                ax=axs[g], legend=False)
             axs[g].set_ylabel(f"GPU {g}")
-            for h, l in zip(*axs[g].get_legend_handles_labels()):
-                used_colours[l] = h
         axs[-1].legend(
-            list(used_colours.values()), list(used_colours.keys()),
+            *axs[-1].get_legend_handles_labels(),
             loc="upper center", bbox_to_anchor=(0.5, -1), ncol=5)
         axs[-1].tick_params(axis='x', labelrotation=45)
         pyplot.tight_layout()
@@ -104,13 +93,13 @@ def main():
 
         fig, axs = pyplot.subplots(nrows, ncols, sharex=True, squeeze=False,
                                    figsize=(10*ncols, 15))
-        data["cpu"].plot(ax=axs[0, 0], color=colours, legend=False)
-        data["mem"].plot(ax=axs[1, 0], color=colours, legend=False)
+        data["cpu"].plot(ax=axs[0, 0], legend=False)
+        data["mem"].plot(ax=axs[1, 0], legend=False)
         axs[2, 0].axhline(0, color='k', ls=":")
         data["write"].drop(columns="requested").plot(
-            ax=axs[2, 0], color=colours, legend=False)
+            ax=axs[2, 0], legend=False)
         data["read"].drop(columns="requested").plot(
-            ax=axs[2, 0], color=colours, legend=False)
+            ax=axs[2, 0], legend=False)
 
         axs[0, 0].set_ylabel("CPU load")
         axs[1, 0].set_ylabel("memory [GB]")
