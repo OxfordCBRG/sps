@@ -62,6 +62,9 @@ def main():
                         help="write output to file")
     args = parser.parse_args()
 
+    if args.output is not None:
+        pyplot.switch_backend('agg')
+
     if not args.spsdir.exists():
         parser.error(f"input directory '{args.spsdir}' does not exist")
 
