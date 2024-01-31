@@ -17,6 +17,8 @@ if(CMAKE_CUDA_COMPILER)
   find_package(CUDAToolkit)
 endif()
 
+find_package(Boost REQUIRED COMPONENTS program_options)
+
 # Find spank header
 check_include_file(slurm/spank.h HAVE_SPANK_HEADER)
 
@@ -27,7 +29,7 @@ if (HAVE_SPANK_HEADER)
 endif()
 
 add_executable(sps sps.cpp)
-target_link_libraries(sps PRIVATE stdc++fs)
+target_link_libraries(sps PRIVATE stdc++fs Boost::program_options)
 
 if(CMAKE_CUDA_COMPILER)
   set(CUDA_SEPARABLE_COMPILATION ON)

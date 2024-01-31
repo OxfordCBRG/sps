@@ -14,12 +14,15 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <boost/program_options.hpp>
 #ifdef HAVE_NVML
 #include "nvidia_gpu.h"
 #endif
 
 
 using namespace std;
+
+namespace po = boost::program_options;
 
 struct Metric
 {
@@ -53,39 +56,86 @@ void append_tab(Metric&, unsigned long long int&, unsigned int&);
 int main(int argc, char *argv[])
 {
     struct Jobstats Job;
-    // INITIALISE LOGGING
     string id = "-";
-    Job.Cpu.Req = "1";
-    string outputdir = "sps-local";
-    if (argc == 5) // This is Slurm, override defaults
-    {   // N.B Spank plugin can't use environment variables.
-        id = string(argv[1]);         // JOBID
-        Job.Cpu.Req = string(argv[2]);       // REQUESTED_CPUS
-        string arrayjob = string(argv[3]);   // ARRAY_ID
-        string arraytask = string(argv[4]);  // ARRAY_TASK
-        if (arrayjob != "0")          // Is 0 when not array job
-            id = arrayjob + "_" + arraytask;
-        outputdir = "sps-" + id;
+    string outputdir;
+    string outfile;
+    
+    bool foreground = false;
+    int jobid = -1;
+    int ncpus = -1;
+    int arrayid = -1;
+    int arraytask = -1;
+    string prefix = "";
+    try {
+      
+      // command line options
+      po::options_description desc("Slurm Profiling Service (sps) Options");
+      desc.add_options()
+	("help,h", "produce help message")
+	("foreground,f", po::bool_switch(&foreground), "run in foreground")
+	("job,j", po::value<int>(&jobid), "the job ID")
+	("ncpus,c", po::value<int>(&ncpus), "the number of requested CPUs")
+	("array-id,a", po::value<int>(&arrayid), "the array ID")
+	("array-task,t", po::value<int>(&arraytask), "the array task")
+	("prefix,p", po::value(&prefix), "prefix for output")
+	;
+      po::variables_map vm;
+      po::store(po::parse_command_line(argc, argv, desc), vm);
+      po::notify(vm);    
+
+      if (vm.count("help")) {
+	cout << desc << "\n";
+	return 1;
+      }
     }
-    else {
-      // check the environment for slurm variables
+    catch(exception& e) {
+        cerr << e.what() << "\n";
+    }
+
+    if (jobid < 0) {
       const char *env_slurm_job_id = getenv("SLURM_JOB_ID");
-      const char *env_slurm_array_job_id = getenv("SLURM_ARRAY_JOB_ID");
-      const char *env_slurm_array_task_id = getenv("SLURM_ARRAY_TASK_ID");
+      if (env_slurm_job_id)
+	jobid = stoi(env_slurm_job_id);
+    }
+    if (ncpus < 0) {
       const char *env_slurm_num_cpus = getenv("SLURM_CPUS_ON_NODE");
       if (env_slurm_num_cpus)
-	Job.Cpu.Req = string(env_slurm_num_cpus);  // REQUESTED_CPUS
-      if (env_slurm_job_id)
-	id = string(env_slurm_job_id); // JOBID
-      if (env_slurm_array_job_id) // ARRAYID
-	id = string(env_slurm_array_job_id) + "_" + string(env_slurm_array_task_id); // ARRAY_TASK
-      if (id != "-")
-	outputdir = "sps-" + id;
+	ncpus = stoi(env_slurm_num_cpus);
     }
+    if (arrayid < 0) {
+      const char *env_slurm_array_job_id = getenv("SLURM_ARRAY_JOB_ID");
+      if (env_slurm_array_job_id)
+	arrayid = stoi(env_slurm_array_job_id);
+    }
+    if (arraytask < 0) {
+      const char *env_slurm_array_task_id = getenv("SLURM_ARRAY_TASK_ID");
+      if (env_slurm_array_task_id)
+	arraytask = stoi(env_slurm_array_task_id);
+    }
+
+    if (ncpus < 0)
+      Job.Cpu.Req = "1";
+    else
+      Job.Cpu.Req = to_string(ncpus);
+
+    if (arrayid > 0 && arraytask > 0)
+      id = to_string(arrayid) + "_" + to_string(arraytask);
+    else if (jobid > 0)
+      id = to_string(jobid);
+
+    if (prefix.length() > 0 && prefix.back() != '/')
+      prefix.append("/");
+
+    if (id != "-")
+      outfile = "sps-" + id;
+    else
+      outfile = "sps-local";
+    outputdir = prefix + outfile;
+
     if (filesystem::exists(outputdir))
         rotate_output(outputdir);     // Up to 9 versions
     filesystem::create_directory(outputdir);
-    string filestem = outputdir + "/" + outputdir;
+    string filestem = outputdir + "/" + outfile;
     ofstream log;
     log.open(filestem + ".log");
     if (!log.is_open())
@@ -149,8 +199,9 @@ int main(int argc, char *argv[])
     // READY TO GO
     try
     {
-      if (daemon(1,0) == -1) // Don't chdir, do send output to /dev/null
-            throw runtime_error("Failed to daemonise\n");
+      if (!foreground)
+	if (daemon(1,0) == -1) // Don't chdir, do send output to /dev/null
+	  throw runtime_error("Failed to daemonise\n");
         // MAIN LOOP
         for (Job.Tick = 1; ; Job.Tick++) // Invariant: Tick = current iteration
         {
