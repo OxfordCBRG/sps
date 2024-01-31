@@ -36,9 +36,7 @@ struct Jobstats
     unsigned int Rate;
     bool Rewrite;
     Metric Cpu, Mem, Read, Write;
-#ifdef HAVE_NVML
     vector<Metric> GPU_load, GPU_mem, GPU_power;
-#endif
     string Cgroup;
 };
 
@@ -156,16 +154,19 @@ int main(int argc, char *argv[])
     Job.Mem.File = filestem + "-mem.tsv";
     Job.Read.File = filestem + "-read.tsv";
     Job.Write.File = filestem + "-write.tsv";
+    unsigned int num_nvidia_gpus=0;
     #ifdef HAVE_NVML
-    unsigned int gpu_count;
     NVML_RT_CALL(nvmlInit());
-    NVML_RT_CALL(nvmlDeviceGetCount(&gpu_count));
-    Job.GPU_load.reserve(gpu_count);
-    Job.GPU_mem.reserve(gpu_count);
-    Job.GPU_power.reserve(gpu_count);
+    NVML_RT_CALL(nvmlDeviceGetCount(&num_nvidia_gpus));
+    #endif
 
+    Job.GPU_load.reserve(num_nvidia_gpus);
+    Job.GPU_mem.reserve(num_nvidia_gpus);
+    Job.GPU_power.reserve(num_nvidia_gpus);
+
+    #ifdef HAVE_NVML
     int i;
-    for (i = 0; i < gpu_count; i++)
+    for (i = 0; i < num_nvidia_gpus; i++)
     {
       nvmlDevice_t device;
       nvmlMemory_t device_memory;
@@ -191,9 +192,7 @@ int main(int argc, char *argv[])
     log << "SLURM_JOB_ID\t\t" << id << endl;
     log << "REQ_CPU_CORES\t\t" << Job.Cpu.Req << endl;
     log << "REQ_MEMORY_GB\t\t" << Job.Mem.Req << endl;
-    #ifdef HAVE_NVML
-    log << "found " << gpu_count << " NVIDIA GPU" << endl;
-    #endif
+    log << "found " << num_nvidia_gpus << " NVIDIA GPU" << endl;
     log << "Starting profiling...\n";
     log.flush();
     // READY TO GO
@@ -238,7 +237,6 @@ inline void get_data(struct Jobstats &Job)
         Vec.push_back(0.0);
     for (auto & [Comm, Vec] : Job.Write.Data)
         Vec.push_back(0.0);
-    #ifdef HAVE_NVML
     for (auto & Gpu: Job.GPU_load)
       for (auto & [Comm, Vec] : Gpu.Data)
 	Vec.push_back(0.0);
@@ -248,7 +246,6 @@ inline void get_data(struct Jobstats &Job)
     for (auto & Gpu: Job.GPU_power)
       for (auto & [Comm, Vec] : Gpu.Data)
 	Vec.push_back(0.0);
-    #endif
     for (const auto & pd : filesystem::directory_iterator("/proc/"))
     {
         const auto full_path = pd.path();
@@ -368,7 +365,6 @@ inline void shrink_data(Jobstats &Job)
         shrink_vector(data);
     for (auto & [pid, data] : Job.Write.Data)
         shrink_vector(data);
-    #ifdef HAVE_NVML
     for (auto & Gpu: Job.GPU_load)
       for (auto & [pid, data] : Gpu.Data)
 	shrink_vector(data);
@@ -378,7 +374,6 @@ inline void shrink_data(Jobstats &Job)
     for (auto & Gpu: Job.GPU_power)
       for (auto & [pid, data] : Gpu.Data)
         shrink_vector(data);
-    #endif
     Job.Rate *= 2;
     Job.Rewrite = true; // History has changed. Full rewrite needed.
 }
@@ -391,14 +386,12 @@ inline void write_output(struct Jobstats &Job)
         rewrite_tab(Job.Mem, Job.Tick, Job.Rate); 
         rewrite_tab(Job.Read, Job.Tick, Job.Rate); 
         rewrite_tab(Job.Write, Job.Tick, Job.Rate);
-	#ifdef HAVE_NVML
 	for (auto & Gpu: Job.GPU_load)
 	  rewrite_tab(Gpu, Job.Tick, Job.Rate);
 	for (auto & Gpu: Job.GPU_mem)
 	  rewrite_tab(Gpu, Job.Tick, Job.Rate);
 	for (auto & Gpu: Job.GPU_power)
 	  rewrite_tab(Gpu, Job.Tick, Job.Rate);
-	#endif
         Job.Rewrite = false;
     }
     else // Just need the latest data appending
@@ -407,14 +400,12 @@ inline void write_output(struct Jobstats &Job)
         append_tab(Job.Mem, Job.Tick, Job.Rate); 
         append_tab(Job.Read, Job.Tick, Job.Rate); 
         append_tab(Job.Write, Job.Tick, Job.Rate);
-	#ifdef HAVE_NVML
 	for (auto & Gpu: Job.GPU_load)
 	  append_tab(Gpu, Job.Tick, Job.Rate);
 	for (auto & Gpu: Job.GPU_mem)
 	  append_tab(Gpu, Job.Tick, Job.Rate);
 	for (auto & Gpu: Job.GPU_power)
 	  append_tab(Gpu, Job.Tick, Job.Rate);
-	#endif
     }
 }
 
