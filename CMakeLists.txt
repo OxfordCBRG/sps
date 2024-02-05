@@ -18,6 +18,7 @@ if(CMAKE_CUDA_COMPILER)
 endif()
 
 find_package(Boost REQUIRED COMPONENTS program_options)
+find_package(rocm_smi)
 
 # Find spank header
 check_include_file(slurm/spank.h HAVE_SPANK_HEADER)
@@ -38,6 +39,11 @@ if(CMAKE_CUDA_COMPILER)
   target_include_directories(sps PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
 endif()
 
+if(ROCM_SMI_INCLUDE_DIRS)
+  target_compile_definitions(sps PRIVATE HAVE_RSMI)
+  target_include_directories(sps PRIVATE ${ROCM_SMI_INCLUDE_DIRS})
+  target_link_libraries(sps PRIVATE ${ROCM_SMI_LIBRARIES})
+endif()
 
 install(TARGETS sps DESTINATION bin)
 install(PROGRAMS ckill sps-pyplot sps-stop DESTINATION bin)

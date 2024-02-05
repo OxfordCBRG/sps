@@ -18,7 +18,9 @@
 #ifdef HAVE_NVML
 #include "nvidia_gpu.h"
 #endif
-
+#ifdef HAVE_RSMI
+#include "amd_gpu.h"
+#endif
 
 using namespace std;
 
@@ -57,7 +59,7 @@ int main(int argc, char *argv[])
     string id = "-";
     string outputdir;
     string outfile;
-    
+
     bool foreground = false;
     int jobid = -1;
     int ncpus = -1;
@@ -154,19 +156,25 @@ int main(int argc, char *argv[])
     Job.Mem.File = filestem + "-mem.tsv";
     Job.Read.File = filestem + "-read.tsv";
     Job.Write.File = filestem + "-write.tsv";
+
     unsigned int num_nvidia_gpus=0;
     #ifdef HAVE_NVML
     NVML_RT_CALL(nvmlInit());
     NVML_RT_CALL(nvmlDeviceGetCount(&num_nvidia_gpus));
     #endif
 
-    Job.GPU_load.reserve(num_nvidia_gpus);
-    Job.GPU_mem.reserve(num_nvidia_gpus);
-    Job.GPU_power.reserve(num_nvidia_gpus);
+    uint32_t num_amd_gpus=0;
+    #ifdef HAVE_RSMI
+    RSMI_CALL(rsmi_init(0));
+    RSMI_CALL(rsmi_num_monitor_devices(&num_amd_gpus));
+    #endif
+
+    Job.GPU_load.reserve(num_nvidia_gpus + num_amd_gpus);
+    Job.GPU_mem.reserve(num_nvidia_gpus + num_amd_gpus);
+    Job.GPU_power.reserve(num_nvidia_gpus + num_amd_gpus);
 
     #ifdef HAVE_NVML
-    int i;
-    for (i = 0; i < num_nvidia_gpus; i++)
+    for (int i = 0; i < num_nvidia_gpus; i++)
     {
       nvmlDevice_t device;
       nvmlMemory_t device_memory;
@@ -185,6 +193,26 @@ int main(int argc, char *argv[])
       Job.GPU_power.push_back(gpower);
     }
     #endif
+    #ifdef HAVE_RSMI
+    for (int i = 0; i < num_amd_gpus; i++)
+    {
+      uint16_t device;
+      uint64_t device_memory;
+      Metric gload, gmem, gpower;
+      RSMI_CALL( rsmi_dev_id_get(i, &device) );
+      RSMI_CALL( rsmi_dev_memory_total_get(i, RSMI_MEM_TYPE_VIS_VRAM, &device_memory) );
+      gload.File = filestem + "-gpu_load-" + to_string(num_nvidia_gpus + i) + ".tsv";
+      gload.Req = "0";
+      gmem.File = filestem + "-gpu_mem-" + to_string(num_nvidia_gpus + i) + ".tsv";
+      gmem.Req = to_string(device_memory  / 1024 / 1024 / 1024); // Want GB
+      gpower.File = filestem + "-gpu_power-" + to_string(num_nvidia_gpus + i) + ".tsv";
+      gpower.Req = "0";
+
+      Job.GPU_load.push_back(gload);
+      Job.GPU_mem.push_back(gmem);
+      Job.GPU_power.push_back(gpower);
+    }
+    #endif
     // LOG STARTUP
     log << "CBB Profiling started ";
     time_t start = chrono::system_clock::to_time_t(chrono::system_clock::now());
@@ -193,6 +221,7 @@ int main(int argc, char *argv[])
     log << "REQ_CPU_CORES\t\t" << Job.Cpu.Req << endl;
     log << "REQ_MEMORY_GB\t\t" << Job.Mem.Req << endl;
     log << "found " << num_nvidia_gpus << " NVIDIA GPU" << endl;
+    log << "found " << num_amd_gpus << " AMD GPU" << endl;
     log << "Starting profiling...\n";
     log.flush();
     // READY TO GO
@@ -213,6 +242,9 @@ int main(int argc, char *argv[])
 	#ifdef HAVE_NVML
 	NVML_RT_CALL( nvmlShutdown( ) );
 	#endif
+	#ifdef HAVE_RSMI
+	RSMI_CALL( rsmi_shut_down() );
+	#endif
         return 0;
         // END MAIN LOOP
     }
@@ -222,6 +254,9 @@ int main(int argc, char *argv[])
         log.flush();
 	#ifdef HAVE_NVML
 	NVML_RT_CALL( nvmlShutdown( ) );
+	#endif
+	#ifdef HAVE_RSMI
+	RSMI_CALL( rsmi_shut_down() );
 	#endif
         exit(1);
     }
@@ -292,13 +327,12 @@ inline void get_data(struct Jobstats &Job)
         Job.Read.Data[comm].back() += read;   // grand total.
         Job.Write.Data[comm].back() += write;
     }
+    unsigned int num_nvidia_gpus = 0;
     #ifdef HAVE_NVML
     // get GPU data
-    unsigned int gpu_count;
     NVML_RT_CALL(nvmlInit());
-    NVML_RT_CALL(nvmlDeviceGetCount(&gpu_count));
-    int i;
-    for (i = 0; i < gpu_count; i++)
+    NVML_RT_CALL(nvmlDeviceGetCount(&num_nvidia_gpus));
+    for (int i = 0; i < num_nvidia_gpus; i++)
     {
       char serial[NVML_DEVICE_SERIAL_BUFFER_SIZE];
       nvmlDevice_t device;
@@ -335,8 +369,7 @@ inline void get_data(struct Jobstats &Job)
 	info_count += 10;
 	infos = new nvmlProcessInfo_t[info_count];
 	NVML_RT_CALL(nvmlDeviceGetComputeRunningProcesses(device, &info_count, infos));
-	int j;
-	for (j=0; j<info_count; j++) {
+	for (int j=0; j<info_count; j++) {
 	  string gpid_root = "/proc/" + to_string(infos[j].pid);
 	  comm = file_to_string(gpid_root + "/comm");
 	  if (!Job.GPU_mem[i].Data.count(comm)) // First time GPU process seen
@@ -348,6 +381,34 @@ inline void get_data(struct Jobstats &Job)
 	  delete[] infos;
 	}
       }
+    }
+    #endif
+
+    #ifdef HAVE_RSMI
+    uint32_t num_amd_gpus;
+    RSMI_CALL(rsmi_init(0));
+    RSMI_CALL(rsmi_num_monitor_devices(&num_amd_gpus));
+    for (int i = 0; i < num_amd_gpus; i++) {
+      uint64_t power;
+      uint64_t device_memory;
+      uint32_t busy_percent;
+      RSMI_CALL( rsmi_dev_power_ave_get(i, 0, &power) );
+      RSMI_CALL( rsmi_dev_memory_usage_get(i, RSMI_MEM_TYPE_VIS_VRAM, &device_memory) );
+      RSMI_CALL( rsmi_dev_busy_percent_get (i, &busy_percent) );
+      string comm = "total";
+
+      if (!Job.GPU_load[i].Data.count(comm)) // First time GPU seen
+        {
+
+	  Job.GPU_load[num_nvidia_gpus + i].Data.emplace(comm, vector<float>(Job.Tick, 0.0));
+	  Job.GPU_mem[num_nvidia_gpus + i].Data.emplace(comm, vector<float>(Job.Tick, 0.0));
+	  Job.GPU_power[num_nvidia_gpus + i].Data.emplace(comm, vector<float>(Job.Tick, 0.0));
+	  Job.Rewrite = true;
+	}
+
+      Job.GPU_load[num_nvidia_gpus + i].Data[comm].back() += busy_percent;
+      Job.GPU_mem[num_nvidia_gpus + i].Data[comm].back() += device_memory  / 1024 / 1024 / 1024; // Want GB
+      Job.GPU_power[num_nvidia_gpus + i].Data[comm].back() += static_cast<float>(power) / 1000000.; // to convert to Watts
     }
     #endif
 }
