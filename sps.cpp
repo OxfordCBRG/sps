@@ -174,7 +174,7 @@ int main(int argc, char *argv[])
     Job.GPU_power.reserve(num_nvidia_gpus + num_amd_gpus);
 
     #ifdef HAVE_NVML
-    for (int i = 0; i < num_nvidia_gpus; i++)
+    for (unsigned int i = 0; i < num_nvidia_gpus; i++)
     {
       nvmlDevice_t device;
       nvmlMemory_t device_memory;
@@ -194,7 +194,7 @@ int main(int argc, char *argv[])
     }
     #endif
     #ifdef HAVE_RSMI
-    for (int i = 0; i < num_amd_gpus; i++)
+    for (uint32_t i = 0; i < num_amd_gpus; i++)
     {
       uint16_t device;
       uint64_t device_memory;
@@ -230,8 +230,8 @@ int main(int argc, char *argv[])
       if (!foreground)
 	if (daemon(1,0) == -1) // Don't chdir, do send output to /dev/null
 	  throw runtime_error("Failed to daemonise\n");
-        // MAIN LOOP
-        for (Job.Tick = 1; ; Job.Tick++) // Invariant: Tick = current iteration
+      // MAIN LOOP
+      for (Job.Tick = 1; ; Job.Tick++) // Invariant: Tick = current iteration
         {
             get_data(Job);
             write_output(Job);
@@ -332,7 +332,7 @@ inline void get_data(struct Jobstats &Job)
     // get GPU data
     NVML_RT_CALL(nvmlInit());
     NVML_RT_CALL(nvmlDeviceGetCount(&num_nvidia_gpus));
-    for (int i = 0; i < num_nvidia_gpus; i++)
+    for (unsigned int i = 0; i < num_nvidia_gpus; i++)
     {
       char serial[NVML_DEVICE_SERIAL_BUFFER_SIZE];
       nvmlDevice_t device;
@@ -369,7 +369,7 @@ inline void get_data(struct Jobstats &Job)
 	info_count += 10;
 	infos = new nvmlProcessInfo_t[info_count];
 	NVML_RT_CALL(nvmlDeviceGetComputeRunningProcesses(device, &info_count, infos));
-	for (int j=0; j<info_count; j++) {
+	for (unsigned int j=0; j<info_count; j++) {
 	  string gpid_root = "/proc/" + to_string(infos[j].pid);
 	  comm = file_to_string(gpid_root + "/comm");
 	  if (!Job.GPU_mem[i].Data.count(comm)) // First time GPU process seen
@@ -388,7 +388,7 @@ inline void get_data(struct Jobstats &Job)
     uint32_t num_amd_gpus;
     RSMI_CALL(rsmi_init(0));
     RSMI_CALL(rsmi_num_monitor_devices(&num_amd_gpus));
-    for (int i = 0; i < num_amd_gpus; i++) {
+    for (uint32_t i = 0; i < num_amd_gpus; i++) {
       uint64_t power;
       uint64_t device_memory;
       uint32_t busy_percent;

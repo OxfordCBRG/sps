@@ -20,6 +20,17 @@ endif()
 find_package(Boost REQUIRED COMPONENTS program_options)
 find_package(rocm_smi)
 
+# enable warnings when debug mode
+if ($<CONFIG:Debug>)
+  if (MSVC)
+    # warning level 4
+    add_compile_options(/W4)
+  else()
+    # additional warnings
+    add_compile_options(-Wall -Wextra -Wpedantic)
+  endif()
+endif()
+
 # Find spank header
 check_include_file(slurm/spank.h HAVE_SPANK_HEADER)
 
