@@ -6,7 +6,7 @@
 #include <slurm/spank.h>
 
 /* All spank plugins must define this macro for the Slurm plugin loader. */
-SPANK_PLUGIN(launch_sps, 1);
+SPANK_PLUGIN(launch_sps, 1)
 
 int slurm_spank_task_init (spank_t sp, int ac, char **av)
 {
