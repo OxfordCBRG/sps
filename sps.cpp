@@ -175,13 +175,13 @@ int main(int argc, char *argv[])
     try {
       if (filesystem::exists(outputdir))
         rotate_output(outputdir);     // Up to 9 versions
+      filesystem::create_directory(outputdir);
     }
     catch(exception& e) {
       cerr << e.what() << "\n";
       return 1;
     }
 
-    filesystem::create_directory(outputdir);
     string filestem = outputdir + "/" + outfile;
 
     // setup logging
