@@ -17,7 +17,7 @@ if(CMAKE_CUDA_COMPILER)
   find_package(CUDAToolkit)
 endif()
 
-find_package(Boost REQUIRED COMPONENTS program_options)
+find_package(Boost REQUIRED COMPONENTS program_options log log_setup)
 find_package(rocm_smi)
 
 # enable warnings when debug mode
@@ -39,7 +39,7 @@ if (HAVE_SPANK_HEADER)
 endif()
 
 add_executable(sps sps.cpp)
-target_link_libraries(sps PRIVATE stdc++fs Boost::program_options)
+target_link_libraries(sps PRIVATE stdc++fs Boost::program_options Boost::log Boost::log_setup)
 
 if(CMAKE_CUDA_COMPILER)
   set(CUDA_SEPARABLE_COMPILATION ON)
