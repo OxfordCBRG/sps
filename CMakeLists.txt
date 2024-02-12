@@ -17,6 +17,8 @@ if(CMAKE_CUDA_COMPILER)
   find_package(CUDAToolkit)
 endif()
 
+add_definitions(-DBOOST_LOG_DYN_LINK)
+
 find_package(Boost REQUIRED COMPONENTS program_options log log_setup)
 find_package(rocm_smi)
 

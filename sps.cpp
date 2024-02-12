@@ -238,8 +238,11 @@ int main(int argc, char *argv[])
       nvmlDevice_t device;
       nvmlMemory_t device_memory;
       Metric gload, gmem, gpower;
+      char deviceName[NVML_DEVICE_NAME_V2_BUFFER_SIZE];
       NVML_RT_CALL(nvmlDeviceGetHandleByIndex(i, &device));
       NVML_RT_CALL(nvmlDeviceGetMemoryInfo(device, &device_memory));
+      NVML_RT_CALL(nvmlDeviceGetName(device, deviceName, NVML_DEVICE_NAME_V2_BUFFER_SIZE));
+      BOOST_LOG_TRIVIAL(info) << "found NVIDIA GPU: " << deviceName;
       gload.File = filestem + "-gpu_load-" + to_string(i) + ".tsv";
       gload.Req = "0";
       gmem.File = filestem + "-gpu_mem-" + to_string(i) + ".tsv";
@@ -258,8 +261,12 @@ int main(int argc, char *argv[])
       uint16_t device;
       uint64_t device_memory;
       Metric gload, gmem, gpower;
+      const size_t deviceName_len = 60;
+      char deviceName[deviceName_len];
       RSMI_CALL( rsmi_dev_id_get(i, &device) );
       RSMI_CALL( rsmi_dev_memory_total_get(i, RSMI_MEM_TYPE_VIS_VRAM, &device_memory) );
+      RSMI_CALL( rsmi_dev_name_get(i, deviceName, deviceName_len) );
+      BOOST_LOG_TRIVIAL(info) << "found AMD GPU: " << deviceName;
       gload.File = filestem + "-gpu_load-" + to_string(num_nvidia_gpus + i) + ".tsv";
       gload.Req = "0";
       gmem.File = filestem + "-gpu_mem-" + to_string(num_nvidia_gpus + i) + ".tsv";
