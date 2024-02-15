@@ -1,5 +1,35 @@
 #!/bin/bash
 
+function print_help {
+    echo 'stop sps and plot results'
+    echo
+    echo '-h print help message'
+    echo '-p <prefix> find time series directory in <prefix>'
+    echo '-o <output> write figure to <output>'
+    echo '            default write to SPS directory'
+}
+
+
+output=""
+prefix=""
+if [ -n $SPS_PREFIX ]; then
+    prefix=${SPS_PREFIX}/
+fi
+while getopts "hp:o:" opt; do
+    case "$opt" in
+	h)
+	    print_help
+	    exit 0
+	    ;;
+	p)
+	    prefix=${OPTARG}/
+	    ;;
+	o)
+	    output=$OPTARG
+	    ;;
+    esac
+done
+
 BASEDIR=$(dirname $0)
 
 # Terminate our process
@@ -17,11 +47,16 @@ fi
 
 # Now, need our SPS output directory and root filenames
 if [ ! -z $JID ]; then
-  SPSDIR=sps-${JID}
+  SPSNAME=sps-${JID}
 else
-  SPSDIR=sps-local
+  SPSNAME=sps-local
 fi
-SPSROOT=${SPSDIR}/${SPSDIR}
+SPSDIR=${prefix}${SPSNAME}
+SPSROOT=${SPSDIR}/${SPSNAME}
+
+if [ -z $output ]; then
+    output=${SPSROOT}.png
+fi
 
 restore_backup () {
   OUT=$1
@@ -44,5 +79,5 @@ if [ -d ${SPSDIR} ]; then
 
     wait # For background tasks
 
-  $BASEDIR/sps-pyplot ${SPSDIR} -o ${SPSDIR}/${SPSDIR}.png
+  $BASEDIR/sps-pyplot ${SPSDIR} -o ${output}
 fi
