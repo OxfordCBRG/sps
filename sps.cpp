@@ -152,6 +152,11 @@ int main(int argc, char *argv[])
       if (env_slurm_array_task_id)
 	arraytask = stoi(env_slurm_array_task_id);
     }
+    if (prefix.length() == 0) {
+      const char * env_sps_prefix = getenv("SPS_PREFIX");
+      if (env_sps_prefix)
+	prefix = env_sps_prefix;
+    }
 
     if (ncpus < 0)
       Job.Cpu.Req = "1";
