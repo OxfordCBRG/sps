@@ -1,8 +1,13 @@
 cmake_minimum_required(VERSION 3.6)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
+
 project(
   sps
   VERSION 3.3
   LANGUAGES C CXX)
+
+option(sps-docs "build SPS documentation" ON)
 
 set(CMAKE_CXX_STANDARD 17)
 set(POSITION_INDEPENDENT_CODE ON)
@@ -10,6 +15,14 @@ set(POSITION_INDEPENDENT_CODE ON)
 include(CheckIncludeFile)
 include(CheckLanguage)
 include(GNUInstallDirs)
+
+# Documentation install directory (default to cmake project docdir)
+set(SPS_DOCDIR "${CMAKE_INSTALL_DOCDIR}")
+
+if(sps-docs)
+  add_subdirectory(docs)
+endif()
+
 
 check_language(CUDA)
 if(CMAKE_CUDA_COMPILER)
