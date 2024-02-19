@@ -3,13 +3,13 @@ cmake_minimum_required(VERSION 3.6)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 
 set(PROJECT_NAME sps)
-option(VERSION_UPDATE_FROM_GIT "get version from git tag" on)
-find_package(Git)
-include(GetVersionFromGitTag)
-
 project(
   ${PROJECT_NAME}
   LANGUAGES C CXX)
+
+option(VERSION_UPDATE_FROM_GIT "get version from git tag" on)
+find_package(Git)
+include(GetVersionFromGitTag)
 
 option(sps-docs "build SPS documentation" ON)
 
