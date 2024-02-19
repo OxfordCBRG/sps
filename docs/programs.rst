@@ -1,8 +1,5 @@
-SPS Programs Overview
-=====================
-
-Manual Pages
-------------
+SPS Manual Pages
+================
 
 .. toctree::
     :maxdepth: 1
