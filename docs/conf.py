@@ -50,3 +50,13 @@ html_theme = 'alabaster'
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
+
+# -- Options for manual page output --------------------------------------------
+# One entry per manual page. List of tuples
+# (source start file, name, description, authors, manual section).
+man_pages = [
+    ('sps', 'sps', 'Slurm (or Simple) Profiling Service', author, 1),
+    ('ckill', 'ckill', 'kill processes in cgroup', author, 1),
+    ('sps-pyplot', 'sps-pyplot', 'plot time series collected by sps', author, 1),
+    ('sps-stop', 'sps-stop', 'stop sps service and plot results', author, 1)
+]

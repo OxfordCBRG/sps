@@ -10,6 +10,7 @@ Welcome to Slurm Profiling Service - SPS's documentation!
    :maxdepth: 2
    :caption: Contents:
 
+   programs
 
 
 Indices and tables
