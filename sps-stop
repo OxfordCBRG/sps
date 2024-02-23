@@ -1,7 +1,39 @@
 #!/bin/bash
 
+function print_help {
+    echo 'stop sps and plot results'
+    echo
+    echo '-h print help message'
+    echo '-p <prefix> find time series directory in <prefix>'
+    echo '-o <output> write figure to <output>'
+    echo '            default write to SPS directory'
+}
+
+
+output=""
+prefix=""
+if [ -n $SPS_PREFIX ]; then
+    prefix=${SPS_PREFIX}/
+fi
+while getopts "hp:o:" opt; do
+    case "$opt" in
+	h)
+	    print_help
+	    exit 0
+	    ;;
+	p)
+	    prefix=${OPTARG}/
+	    ;;
+	o)
+	    output=$OPTARG
+	    ;;
+    esac
+done
+
+BASEDIR=$(dirname $0)
+
 # Terminate our process
-/usr/bin/ckill sps || exit 1
+$BASEDIR/ckill sps || exit 1
 
 # For regular jobs, the Job ID is sufficient. However, for array jobs,
 # we need to reconstruct the special array job ID and set the Job ID
@@ -10,19 +42,24 @@ JID=${SLURM_JOB_ID}
 AID=${SLURM_ARRAY_JOB_ID}
 TID=${SLURM_ARRAY_TASK_ID}
 if [ ! -z $AID ] && [ ! -z $TID ]; then
-  JID=`echo ${AID}_${TID}`
+  JID=${AID}_${TID}
 fi
 
 # Now, need our SPS output directory and root filenames
 if [ ! -z $JID ]; then
-  SPSDIR=`echo sps-$JID`
+  SPSNAME=sps-${JID}
 else
-  SPSDIR=`echo sps-local`
+  SPSNAME=sps-local
 fi
-SPSROOT=`echo ${SPSDIR}/${SPSDIR}`
+SPSDIR=${prefix}${SPSNAME}
+SPSROOT=${SPSDIR}/${SPSNAME}
+
+if [ -z $output ]; then
+    output=${SPSROOT}.png
+fi
 
 restore_backup () {
-  OUT="${SPSROOT}-${1}.tsv"
+  OUT=$1
   BAK="${OUT}.bak"
   # If we got killed in the middle of a rewrite, there may be a backup file
   if [ -f "$BAK" ]; then
@@ -35,14 +72,12 @@ restore_backup () {
   fi
 }
 
-restore_backup "cpu" &
-restore_backup "mem" &
-restore_backup "read" &
-restore_backup "write" &
-
-wait # For background tasks
-
 if [ -d ${SPSDIR} ]; then
-  /usr/bin/sps-sum ${SPSROOT}*tsv
-  /usr/bin/sps-plot ${SPSROOT}*tsv ${SPSROOT}*sum
+    for f in ${SPSROOT}-*.tsv; do
+	restore_backup $f &
+    done
+
+    wait # For background tasks
+
+  $BASEDIR/sps-pyplot ${SPSDIR} -o ${output}
 fi
