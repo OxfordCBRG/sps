@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+
+
+from pathlib import Path
+import argparse
+import pandas
+from matplotlib import pyplot
+import datetime
+
+METRICS = ["cpu", "mem", "read", "write"]
+GPU_METRICS = ["gpu_load", "gpu_mem", "gpu_power"]
+GPU_LABELS = ["GPU load", "GPU memory [GB]", "GPU power [Watt]"]
+
+
+def convert_time(value):
+    return datetime.timedelta(seconds=float(value))
+
+
+def load_data(basepath: Path):
+    data = {}
+
+    for metric in METRICS:
+        fname = basepath / (basepath.name + f'-{metric}.tsv')
+        if not fname.exists():
+            raise RuntimeError(f"metrics file {fname} does not exist")
+        data[metric] = pandas.read_csv(
+            fname, delim_whitespace=True, index_col=0,
+            converters={"#TIME": convert_time})
+    data["read"] = -data["read"]
+    nGPUs = 0
+    have_gpus = True
+    while have_gpus:
+        for metric in GPU_METRICS:
+            fname = basepath / (basepath.name + f'-{metric}-{nGPUs}.tsv')
+            if not fname.exists():
+                if metric == GPU_METRICS[0]:
+                    have_gpus = False
+                    break
+                else:
+                    raise RuntimeError(f"metrics file {fname} does not exist")
+            data[f"{metric}-{nGPUs}"] = pandas.read_csv(
+                fname, delim_whitespace=True, index_col=0,
+                converters={"#TIME": convert_time})
+        if have_gpus:
+            nGPUs += 1
+    for m in data:
+        data[m].index.rename("time", inplace=True)
+        data[m].rename(columns={"REQUESTED": "requested"},
+                       inplace=True)
+    data["nGPUs"] = nGPUs
+
+    return data
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("spsdir", type=Path,
+                        help="directory containing metrics collected by sps")
+    parser.add_argument("-g", "--gpu-mem", action="store_true", default=False,
+                        help="plot GPU memory usage per GPU process")
+    parser.add_argument("-o", "--output",
+                        help="write output to file")
+    args = parser.parse_args()
+
+    if args.output is not None:
+        pyplot.switch_backend('agg')
+
+    if not args.spsdir.exists():
+        parser.error(f"input directory '{args.spsdir}' does not exist")
+
+    try:
+        data = load_data(args.spsdir)
+    except RuntimeError as e:
+        parser.error(e)
+
+    if args.gpu_mem:
+        fig, axs = pyplot.subplots(
+            data["nGPUs"], 1, sharex=True,
+            figsize=(10, 1.6*(data["nGPUs"]+1)))
+        for g in range(data["nGPUs"]):
+            data[f"gpu_mem-{g}"].drop(columns="total").plot(
+                ax=axs[g], legend=False)
+            axs[g].set_ylabel(f"GPU {g}")
+        axs[-1].legend(
+            *axs[-1].get_legend_handles_labels(),
+            loc="upper center", bbox_to_anchor=(0.5, -1), ncol=5)
+        axs[-1].tick_params(axis='x', labelrotation=45)
+        pyplot.tight_layout()
+        fig.suptitle("GPU Memory [GB]")
+    else:
+        nrows = 3
+        if data["nGPUs"] > 0:
+            ncols = 2
+        else:
+            ncols = 1
+
+        fig, axs = pyplot.subplots(nrows, ncols, sharex=True, squeeze=False,
+                                   figsize=(10*ncols, 15))
+        data["cpu"].plot(ax=axs[0, 0], legend=False)
+        data["mem"].plot(ax=axs[1, 0], legend=False)
+        axs[2, 0].axhline(0, color='k', ls=":")
+        data["write"].drop(columns="requested").plot(
+            ax=axs[2, 0], legend=False)
+        data["read"].drop(columns="requested").plot(
+            ax=axs[2, 0], legend=False)
+
+        axs[0, 0].set_ylabel("CPU load")
+        axs[1, 0].set_ylabel("memory [GB]")
+        axs[2, 0].set_ylabel("I/O (-ve read, +ve write) [GB]")
+
+        read, write = axs[2, 0].get_ylim()
+        io = max(-read, write)
+        axs[2, 0].set_ylim([-io, io])
+
+        if data["nGPUs"] > 0:
+            for i, m in enumerate(GPU_METRICS):
+                for g in range(data["nGPUs"]):
+                    axs[i, 1].plot(data[f"{m}-{g}"]["total"], label=f"GPU {g}")
+                axs[i, 1].set_ylabel(GPU_LABELS[i])
+
+        axs[2, 0].set_xlabel("time [s]")
+        axs[2, 0].legend(
+            *axs[0, 0].get_legend_handles_labels(),
+            loc="upper center", bbox_to_anchor=(0.5, -0.5), ncol=5)
+        if data["nGPUs"] > 0:
+            axs[2, 1].set_xlabel("time [s]")
+            axs[2, 1].legend(
+                *axs[2, 1].get_legend_handles_labels(),
+                loc="upper center", bbox_to_anchor=(0.5, -0.5), ncol=5)
+
+        fig.autofmt_xdate(rotation=45)
+
+    if args.output is not None:
+        pyplot.savefig(args.output)
+    else:
+        pyplot.show()
+
+
+if __name__ == '__main__':
+    main()
